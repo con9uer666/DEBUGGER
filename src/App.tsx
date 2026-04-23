@@ -21,7 +21,30 @@ import {
   type WatchValue,
 } from './shared/contracts'
 
-type ActiveTab = 'editor' | 'memory' | 'registers'
+type ActiveTab = 'editor' | 'memory' | 'registers' | 'logs'
+type LeftPanelView = 'project' | 'files'
+type RightPanelView = 'watch' | 'session'
+type IconName =
+  | 'folder'
+  | 'refresh'
+  | 'tool'
+  | 'vscode'
+  | 'list'
+  | 'play'
+  | 'download'
+  | 'stop'
+  | 'pause'
+  | 'step-over'
+  | 'step-into'
+  | 'step-out'
+  | 'reset'
+  | 'more'
+  | 'plus'
+  | 'wave'
+  | 'write'
+  | 'remove'
+  | 'info'
+  | 'stack'
 
 const sampleToolchainHints = [
   '建议 toolchain file 指向 STM32 的 arm-none-eabi CMake 工具链文件',
@@ -43,6 +66,186 @@ const emptyEnvironmentCheck: EnvironmentCheckResult = {
   checkedAt: '',
   ready: false,
   tools: [],
+}
+
+function Icon({ name }: { name: IconName }) {
+  const commonProps = {
+    className: 'button-icon',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  }
+
+  switch (name) {
+    case 'folder':
+      return (
+        <svg {...commonProps}>
+          <path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8A1.5 1.5 0 0 1 20.5 9.5v7A1.5 1.5 0 0 1 19 18H5A1.5 1.5 0 0 1 3.5 16.5z" />
+        </svg>
+      )
+    case 'refresh':
+      return (
+        <svg {...commonProps}>
+          <path d="M20 6v5h-5" />
+          <path d="M4 18v-5h5" />
+          <path d="M6.7 10A7 7 0 0 1 18 7l2 4" />
+          <path d="M17.3 14A7 7 0 0 1 6 17l-2-4" />
+        </svg>
+      )
+    case 'tool':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 21l5.4-5.4" />
+          <path d="M14.5 6.5a4 4 0 1 0 3 3l2.5 2.5 1.5-1.5-2.5-2.5a4 4 0 0 0-4.5-1z" />
+        </svg>
+      )
+    case 'vscode':
+      return (
+        <svg {...commonProps}>
+          <path d="M16 4l4 2v12l-4 2-8-7z" />
+          <path d="M8 9L4 6 2 8l4 4-4 4 2 2 4-3" />
+        </svg>
+      )
+    case 'list':
+      return (
+        <svg {...commonProps}>
+          <path d="M9 6h10" />
+          <path d="M9 12h10" />
+          <path d="M9 18h10" />
+          <circle cx="5" cy="6" r="1" />
+          <circle cx="5" cy="12" r="1" />
+          <circle cx="5" cy="18" r="1" />
+        </svg>
+      )
+    case 'play':
+      return (
+        <svg {...commonProps}>
+          <path d="M8 6.5v11l8-5.5z" />
+        </svg>
+      )
+    case 'download':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 4v10" />
+          <path d="M8.5 10.5L12 14l3.5-3.5" />
+          <path d="M4 18h16" />
+        </svg>
+      )
+    case 'stop':
+      return (
+        <svg {...commonProps}>
+          <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+        </svg>
+      )
+    case 'pause':
+      return (
+        <svg {...commonProps}>
+          <path d="M9 6v12" />
+          <path d="M15 6v12" />
+        </svg>
+      )
+    case 'step-over':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 7h16" />
+          <path d="M8 11h8" />
+          <path d="M12 11v6" />
+          <path d="M9.5 14.5L12 17l2.5-2.5" />
+        </svg>
+      )
+    case 'step-into':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 7h16" />
+          <path d="M8 11h5" />
+          <path d="M13 11v6" />
+          <path d="M10.5 14.5L13 17l2.5-2.5" />
+        </svg>
+      )
+    case 'step-out':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 7h16" />
+          <path d="M13 17v-6" />
+          <path d="M10.5 13.5L13 11l2.5 2.5" />
+          <path d="M13 11h5" />
+        </svg>
+      )
+    case 'reset':
+      return (
+        <svg {...commonProps}>
+          <path d="M20 5v5h-5" />
+          <path d="M20 10a8 8 0 1 0 2 5.5" />
+        </svg>
+      )
+    case 'more':
+      return (
+        <svg {...commonProps}>
+          <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'plus':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 5v14" />
+          <path d="M5 12h14" />
+        </svg>
+      )
+    case 'wave':
+      return (
+        <svg {...commonProps}>
+          <path d="M2 13c2 0 2-6 4-6s2 10 4 10 2-10 4-10 2 6 4 6 2-2 4-2" />
+        </svg>
+      )
+    case 'write':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 20l4-.8 8.8-8.8-3.2-3.2L4.8 16z" />
+          <path d="M12.8 7.2l3.2 3.2" />
+        </svg>
+      )
+    case 'remove':
+      return (
+        <svg {...commonProps}>
+          <path d="M5 7h14" />
+          <path d="M9 7V5.5h6V7" />
+          <path d="M8 7l1 11h6l1-11" />
+        </svg>
+      )
+    case 'info':
+      return (
+        <svg {...commonProps}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 10v6" />
+          <path d="M12 7.5h.01" />
+        </svg>
+      )
+    case 'stack':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 4l8 4-8 4-8-4z" />
+          <path d="M4 12l8 4 8-4" />
+          <path d="M4 16l8 4 8-4" />
+        </svg>
+      )
+    default:
+      return null
+  }
+}
+
+function ButtonLabel({ icon, text }: { icon: IconName; text: string }) {
+  return (
+    <span className="button-label">
+      <Icon name={icon} />
+      <span>{text}</span>
+    </span>
+  )
 }
 
 const MAX_SCOPE_POINTS = 600
@@ -86,6 +289,42 @@ function formatSampleAge(timestamp: number | null) {
   }
 
   return `${(ageMs / 1000).toFixed(1)} s 前`
+}
+
+function formatSessionStatus(status: string) {
+  switch (status) {
+    case 'connecting':
+      return '连接中'
+    case 'running':
+      return '运行中'
+    case 'halted':
+      return '已停住'
+    case 'programming':
+      return '下载中'
+    case 'idle':
+      return '空闲'
+    default:
+      return status
+  }
+}
+
+function formatControlCommand(command: DebugControlCommand) {
+  switch (command) {
+    case 'continue':
+      return '继续'
+    case 'pause':
+      return '暂停'
+    case 'step-over':
+      return '单步越过'
+    case 'step-into':
+      return '单步进入'
+    case 'step-out':
+      return '单步跳出'
+    case 'reset':
+      return '复位'
+    default:
+      return command
+  }
 }
 
 interface WatchOscilloscopeProps {
@@ -238,15 +477,18 @@ function App() {
   const [scan, setScan] = useState<ProjectScanResult>(initialScan(defaultProjectProfile))
   const [activeFile, setActiveFile] = useState<OpenFileResult | null>(null)
   const [activeTab, setActiveTab] = useState<ActiveTab>('editor')
+  const [leftPanelView, setLeftPanelView] = useState<LeftPanelView>('project')
+  const [rightPanelView, setRightPanelView] = useState<RightPanelView>('watch')
   const [debugState, setDebugState] = useState<DebugSessionState>(emptyDebugSessionState)
   const [buildLogs, setBuildLogs] = useState<LogEvent[]>([])
   const [debugLogs, setDebugLogs] = useState<LogEvent[]>([])
   const [watchDraft, setWatchDraft] = useState('')
   const [variableValueDraft, setVariableValueDraft] = useState('')
   const [selectedWatch, setSelectedWatch] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
   const [scopeSamples, setScopeSamples] = useState<WatchSample[]>([])
   const [samplingTargetHz, setSamplingTargetHz] = useState(1000)
-  const [statusText, setStatusText] = useState('Ready')
+  const [statusText, setStatusText] = useState('就绪')
   const [isBusy, setIsBusy] = useState(false)
   const [editorReady, setEditorReady] = useState(false)
 
@@ -258,6 +500,17 @@ function App() {
   const breakpointMap = useMemo(() => mapBreakpointsByFile(debugState), [debugState])
   const buildLogText = useMemo(() => createLogText(buildLogs), [buildLogs])
   const debugLogText = useMemo(() => createLogText(debugLogs), [debugLogs])
+  const filteredSourceFiles = useMemo(() => {
+    const keyword = sourceFilter.trim().toLowerCase()
+
+    if (!keyword) {
+      return scan.sourceFiles
+    }
+
+    return scan.sourceFiles.filter((entry) => {
+      return entry.name.toLowerCase().includes(keyword) || entry.relativePath.toLowerCase().includes(keyword)
+    })
+  }, [scan.sourceFiles, sourceFilter])
 
   useEffect(() => {
     window.stm32Debug
@@ -301,7 +554,7 @@ function App() {
 
       setDebugState(state)
       setSamplingTargetHz(state.watchSampling.targetHz)
-      setStatusText(`${state.status} | ${formatFrame(state.currentFrame)}`)
+      setStatusText(`${formatSessionStatus(state.status)} | ${formatFrame(state.currentFrame)}`)
     })
     const offSamples = window.stm32Debug.onWatchSamples((batch) => {
       if (samplingExpressionRef.current !== batch.expression) {
@@ -389,6 +642,7 @@ function App() {
 
     const nextProfile = { ...profile, projectRoot: directory }
     setProfile(nextProfile)
+    setLeftPanelView('project')
     await refreshProject(nextProfile)
   }
 
@@ -430,7 +684,7 @@ function App() {
     }
 
     const selected = await window.stm32Debug.chooseFile({
-      title: key === 'toolchainFile' ? '选择 CMake toolchain file' : '选择 ELF 文件',
+      title: key === 'toolchainFile' ? '选择 CMake 工具链文件' : '选择 ELF 文件',
       defaultPath: profile.projectRoot,
       filters:
         key === 'toolchainFile'
@@ -453,17 +707,17 @@ function App() {
   }
 
   async function configureProject() {
-    await withBusyState('CMake configure...', async () => {
+    await withBusyState('正在执行 CMake 配置...', async () => {
       setBuildLogs([])
       const result = await window.stm32Debug.configureProject(profile)
-      handleCommandResult(result, 'CMake configure 完成')
+      handleCommandResult(result, 'CMake 配置完成')
     })
   }
 
   async function buildProject() {
-    await withBusyState('CMake build...', async () => {
+    await withBusyState('正在执行 CMake 编译...', async () => {
       const result = await window.stm32Debug.buildProject(profile)
-      handleCommandResult(result, 'CMake build 完成')
+      handleCommandResult(result, 'CMake 编译完成')
     })
   }
 
@@ -479,6 +733,7 @@ function App() {
       setDebugLogs([])
       const state = await window.stm32Debug.startDebugSession(profile)
       setDebugState(state)
+      setRightPanelView('watch')
       setStatusText(`已连接调试器 | ${formatFrame(state.currentFrame)}`)
     })
   }
@@ -500,7 +755,7 @@ function App() {
   }
 
   async function sendControl(command: DebugControlCommand) {
-    await withBusyState(`调试命令: ${command}`, async () => {
+    await withBusyState(`调试命令: ${formatControlCommand(command)}`, async () => {
       const state = await window.stm32Debug.sendDebugControl(command)
       setDebugState(state)
     })
@@ -550,12 +805,14 @@ function App() {
     const nextExpressions = [...debugState.watches.map((entry) => entry.expression), expression]
     const state = await window.stm32Debug.setWatchExpressions(nextExpressions)
     setDebugState(state)
+    setRightPanelView('watch')
     setWatchDraft('')
   }
 
   async function refreshWatchValues() {
     const state = await window.stm32Debug.refreshWatches()
     setDebugState(state)
+    setRightPanelView('watch')
   }
 
   async function configureWatchSampling(enabled: boolean) {
@@ -573,6 +830,7 @@ function App() {
         targetHz: samplingTargetHz,
       })
       setDebugState(state)
+      setRightPanelView('watch')
       setStatusText(
         enabled
           ? `示波器已连接到 ${expression}，目标频率 ${formatFrequency(state.watchSampling.targetHz)}`
@@ -606,6 +864,7 @@ function App() {
     await withBusyState(`修改变量 ${selectedWatch}`, async () => {
       const state = await window.stm32Debug.setVariable(selectedWatch, variableValueDraft.trim())
       setDebugState(state)
+      setRightPanelView('watch')
       setStatusText(`已写入变量 ${selectedWatch}`)
     })
   }
@@ -641,10 +900,10 @@ function App() {
   }
 
   const scopeModeLabel = debugState.watchSampling.active
-    ? 'Live'
+    ? '实时'
     : debugState.watchSampling.enabled
-      ? 'Armed'
-      : 'Idle'
+      ? '待命'
+      : '空闲'
 
   return (
     <div className="workbench-shell">
@@ -656,10 +915,10 @@ function App() {
         <div className="status-pill-group">
           <span className="status-pill">{environment.platform}</span>
           <span className={debugState.connected ? 'status-pill active' : 'status-pill'}>
-            {debugState.connected ? 'Debugger Connected' : 'Debugger Idle'}
+            {debugState.connected ? '调试器已连接' : '调试器空闲'}
           </span>
           <span className={debugState.running ? 'status-pill running' : 'status-pill'}>
-            {debugState.running ? 'Running' : 'Halted'}
+            {debugState.running ? '运行中' : '已停住'}
           </span>
         </div>
       </header>
@@ -668,194 +927,248 @@ function App() {
         <div>
           <h2>面向 Windows 的 STM32 图形化调试工作台</h2>
           <p>
-            统一管理 CMake 构建、OpenOCD 连接、GDB 单步、断点、调用栈、变量监视与 VS Code 调试配置生成。
+            统一管理 CMake 构建、OpenOCD 连接、GDB 单步、断点、调用栈和变量监视。界面改为主操作直达，次要操作收纳到二级菜单，调试时不用再整页滚轮找按钮。
           </p>
         </div>
         <div className="hero-actions">
           <button onClick={() => void openProjectRoot()} disabled={isBusy}>
-            选择工程目录
+            <ButtonLabel icon="folder" text="选择工程" />
           </button>
           <button onClick={() => void refreshProject()} disabled={isBusy || !profile.projectRoot}>
-            重新扫描工程
+            <ButtonLabel icon="refresh" text="扫描工程" />
           </button>
-          <button onClick={() => void runEnvironmentCheck()} disabled={isBusy}>
-            环境自检
-          </button>
-          <button onClick={() => void generateVsCodeFiles()} disabled={isBusy || !profile.projectRoot}>
-            生成 VS Code 配置
-          </button>
+          <details className="action-menu">
+            <summary>
+              <ButtonLabel icon="more" text="更多工具" />
+            </summary>
+            <div className="action-menu-list">
+              <button onClick={() => void runEnvironmentCheck()} disabled={isBusy}>
+                <ButtonLabel icon="tool" text="环境自检" />
+              </button>
+              <button onClick={() => void generateVsCodeFiles()} disabled={isBusy || !profile.projectRoot}>
+                <ButtonLabel icon="vscode" text="生成 VS Code 配置" />
+              </button>
+            </div>
+          </details>
         </div>
       </section>
 
       <main className="workspace-grid">
         <aside className="left-panel panel">
-          <section className="panel-section form-panel">
-            <div className="panel-header">
-              <h3>Project Profile</h3>
-              <span>{scan.sourceFiles.length} files</span>
-            </div>
+          <div className="panel-switcher">
+            <button className={leftPanelView === 'project' ? 'active' : ''} onClick={() => setLeftPanelView('project')}>
+              <ButtonLabel icon="tool" text="工程设置" />
+            </button>
+            <button className={leftPanelView === 'files' ? 'active' : ''} onClick={() => setLeftPanelView('files')}>
+              <ButtonLabel icon="list" text="源码列表" />
+            </button>
+          </div>
 
-            <label>
-              <span>Project Root</span>
-              <input value={profile.projectRoot} onChange={(event) => updateProfile('projectRoot', event.target.value)} />
-            </label>
-            <div className="field-row">
-              <label>
-                <span>Build Dir</span>
-                <input value={profile.buildDir} onChange={(event) => updateProfile('buildDir', event.target.value)} />
-              </label>
-              <label>
-                <span>Generator</span>
-                <input value={profile.generator} onChange={(event) => updateProfile('generator', event.target.value)} />
-              </label>
-            </div>
-            <div className="field-row">
-              <label>
-                <span>Build Type</span>
-                <input value={profile.buildType} onChange={(event) => updateProfile('buildType', event.target.value)} />
-              </label>
-              <label>
-                <span>Jobs</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={profile.jobs}
-                  onChange={(event) => updateProfile('jobs', Number(event.target.value || '1'))}
-                />
-              </label>
-            </div>
-            <label>
-              <span>Toolchain File</span>
-              <div className="chooser-row">
-                <input value={profile.toolchainFile} onChange={(event) => updateProfile('toolchainFile', event.target.value)} />
-                <button type="button" onClick={() => void chooseFileForField('toolchainFile')}>
-                  ...
-                </button>
+          {leftPanelView === 'project' ? (
+            <section className="panel-section form-panel">
+              <div className="panel-header">
+                <h3>工程设置</h3>
+                <span>{scan.sourceFiles.length} 个文件</span>
               </div>
-            </label>
-            <label>
-              <span>CMake Extra Args</span>
-              <input value={profile.configureArgs} onChange={(event) => updateProfile('configureArgs', event.target.value)} />
-            </label>
-            <label>
-              <span>Build Target</span>
-              <input value={profile.buildTarget} onChange={(event) => updateProfile('buildTarget', event.target.value)} />
-            </label>
-            <label>
-              <span>OpenOCD Path</span>
-              <input value={profile.openOcdPath} onChange={(event) => updateProfile('openOcdPath', event.target.value)} />
-            </label>
-            <label>
-              <span>OpenOCD Config</span>
-              <textarea rows={3} value={profile.openOcdConfig} onChange={(event) => updateProfile('openOcdConfig', event.target.value)} />
-            </label>
-            <label>
-              <span>GDB Path</span>
-              <input value={profile.gdbPath} onChange={(event) => updateProfile('gdbPath', event.target.value)} />
-            </label>
-            <label>
-              <span>ELF File</span>
-              <div className="chooser-row">
-                <input value={profile.elfFile} onChange={(event) => updateProfile('elfFile', event.target.value)} />
-                <button type="button" onClick={() => void chooseFileForField('elfFile')}>
-                  ...
-                </button>
+
+              <label>
+                <span>工程目录</span>
+                <input value={profile.projectRoot} onChange={(event) => updateProfile('projectRoot', event.target.value)} />
+              </label>
+              <div className="field-row">
+                <label>
+                  <span>构建目录</span>
+                  <input value={profile.buildDir} onChange={(event) => updateProfile('buildDir', event.target.value)} />
+                </label>
+                <label>
+                  <span>生成器</span>
+                  <input value={profile.generator} onChange={(event) => updateProfile('generator', event.target.value)} />
+                </label>
               </div>
-            </label>
-
-            <div className="toggle-grid">
-              <label className="toggle-row">
-                <input type="checkbox" checked={profile.flashOnConnect} onChange={(event) => updateProfile('flashOnConnect', event.target.checked)} />
-                <span>Connect 时下载 ELF</span>
+              <div className="field-row">
+                <label>
+                  <span>构建类型</span>
+                  <input value={profile.buildType} onChange={(event) => updateProfile('buildType', event.target.value)} />
+                </label>
+                <label>
+                  <span>并行任务</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={profile.jobs}
+                    onChange={(event) => updateProfile('jobs', Number(event.target.value || '1'))}
+                  />
+                </label>
+              </div>
+              <label>
+                <span>工具链文件</span>
+                <div className="chooser-row">
+                  <input value={profile.toolchainFile} onChange={(event) => updateProfile('toolchainFile', event.target.value)} />
+                  <button type="button" onClick={() => void chooseFileForField('toolchainFile')}>
+                    <ButtonLabel icon="folder" text="浏览" />
+                  </button>
+                </div>
               </label>
-              <label className="toggle-row">
-                <input type="checkbox" checked={profile.resetAfterConnect} onChange={(event) => updateProfile('resetAfterConnect', event.target.checked)} />
-                <span>Connect 后 reset halt</span>
+              <label>
+                <span>ELF 文件</span>
+                <div className="chooser-row">
+                  <input value={profile.elfFile} onChange={(event) => updateProfile('elfFile', event.target.value)} />
+                  <button type="button" onClick={() => void chooseFileForField('elfFile')}>
+                    <ButtonLabel icon="folder" text="浏览" />
+                  </button>
+                </div>
               </label>
-              <label className="toggle-row">
-                <input type="checkbox" checked={profile.runToMain} onChange={(event) => updateProfile('runToMain', event.target.checked)} />
-                <span>自动运行到 main</span>
-              </label>
-            </div>
 
-            <div className="action-grid">
-              <button onClick={() => void configureProject()} disabled={isBusy || !profile.projectRoot}>
-                Configure
-              </button>
-              <button onClick={() => void buildProject()} disabled={isBusy || !profile.projectRoot}>
-                Build
-              </button>
-              <button onClick={() => void programDevice()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
-                Program Device
-              </button>
-              <button onClick={() => void startDebugSession()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
-                Start Debug
-              </button>
-              <button onClick={() => void stopDebugSession()} disabled={isBusy || !debugState.connected}>
-                Stop Debug
-              </button>
-            </div>
+              <details className="collapse-card">
+                <summary>
+                  <ButtonLabel icon="tool" text="高级调试参数" />
+                </summary>
+                <div className="collapse-card-body">
+                  <label>
+                    <span>CMake 额外参数</span>
+                    <input value={profile.configureArgs} onChange={(event) => updateProfile('configureArgs', event.target.value)} />
+                  </label>
+                  <label>
+                    <span>构建目标</span>
+                    <input value={profile.buildTarget} onChange={(event) => updateProfile('buildTarget', event.target.value)} />
+                  </label>
+                  <label>
+                    <span>OpenOCD 路径</span>
+                    <input value={profile.openOcdPath} onChange={(event) => updateProfile('openOcdPath', event.target.value)} />
+                  </label>
+                  <label>
+                    <span>OpenOCD 配置</span>
+                    <textarea rows={3} value={profile.openOcdConfig} onChange={(event) => updateProfile('openOcdConfig', event.target.value)} />
+                  </label>
+                  <label>
+                    <span>GDB 路径</span>
+                    <input value={profile.gdbPath} onChange={(event) => updateProfile('gdbPath', event.target.value)} />
+                  </label>
+                  <div className="toggle-grid">
+                    <label className="toggle-row">
+                      <input type="checkbox" checked={profile.flashOnConnect} onChange={(event) => updateProfile('flashOnConnect', event.target.checked)} />
+                      <span>连接时下载 ELF</span>
+                    </label>
+                    <label className="toggle-row">
+                      <input type="checkbox" checked={profile.resetAfterConnect} onChange={(event) => updateProfile('resetAfterConnect', event.target.checked)} />
+                      <span>连接后 reset halt</span>
+                    </label>
+                    <label className="toggle-row">
+                      <input type="checkbox" checked={profile.runToMain} onChange={(event) => updateProfile('runToMain', event.target.checked)} />
+                      <span>自动运行到 main</span>
+                    </label>
+                  </div>
+                </div>
+              </details>
 
-            <ul className="hint-list">
-              {sampleToolchainHints.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="panel-section file-browser">
-            <div className="panel-header">
-              <h3>Source Explorer</h3>
-              <span>{scan.cmakeListsPath ? 'CMake detected' : 'No CMakeLists.txt'}</span>
-            </div>
-            <div className="file-list">
-              {scan.sourceFiles.map((entry) => (
-                <button key={entry.path} className={activeFile?.path === entry.path ? 'file-item active' : 'file-item'} onClick={() => void openFile(entry)}>
-                  <span>{entry.name}</span>
-                  <small>{entry.relativePath}</small>
+              <div className="primary-action-strip">
+                <button onClick={() => void configureProject()} disabled={isBusy || !profile.projectRoot}>
+                  <ButtonLabel icon="tool" text="配置工程" />
                 </button>
-              ))}
-            </div>
-          </section>
+                <button onClick={() => void buildProject()} disabled={isBusy || !profile.projectRoot}>
+                  <ButtonLabel icon="refresh" text="编译工程" />
+                </button>
+                <button onClick={() => void startDebugSession()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
+                  <ButtonLabel icon="play" text="开始调试" />
+                </button>
+                <details className="action-menu">
+                  <summary>
+                    <ButtonLabel icon="more" text="更多操作" />
+                  </summary>
+                  <div className="action-menu-list">
+                    <button onClick={() => void programDevice()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
+                      <ButtonLabel icon="download" text="下载程序" />
+                    </button>
+                    <button onClick={() => void stopDebugSession()} disabled={isBusy || !debugState.connected}>
+                      <ButtonLabel icon="stop" text="停止调试" />
+                    </button>
+                  </div>
+                </details>
+              </div>
+
+              <details className="collapse-card subtle">
+                <summary>
+                  <ButtonLabel icon="info" text="填写建议" />
+                </summary>
+                <div className="collapse-card-body">
+                  <ul className="hint-list">
+                    {sampleToolchainHints.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            </section>
+          ) : (
+            <section className="panel-section file-browser">
+              <div className="panel-header">
+                <h3>源码列表</h3>
+                <span>{scan.cmakeListsPath ? '已识别 CMake' : '未找到 CMakeLists.txt'}</span>
+              </div>
+              <label>
+                <span>筛选文件</span>
+                <input value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} placeholder="输入文件名或相对路径" />
+              </label>
+              <div className="file-list">
+                {filteredSourceFiles.map((entry) => (
+                  <button key={entry.path} className={activeFile?.path === entry.path ? 'file-item active' : 'file-item'} onClick={() => void openFile(entry)}>
+                    <span>{entry.name}</span>
+                    <small>{entry.relativePath}</small>
+                  </button>
+                ))}
+                {filteredSourceFiles.length === 0 ? <div className="empty-list-state">没有匹配的源码文件。</div> : null}
+              </div>
+            </section>
+          )}
         </aside>
 
         <section className="editor-panel panel">
           <div className="panel-header editor-toolbar">
             <div>
-              <h3>{activeFile ? activeFile.path : 'Editor'}</h3>
+              <h3>{activeFile ? activeFile.path : '代码视图'}</h3>
               <span>{statusText}</span>
             </div>
             <div className="toolbar-buttons">
               <button onClick={() => void sendControl('continue')} disabled={!debugState.connected || isBusy}>
-                Continue
+                <ButtonLabel icon="play" text="继续" />
               </button>
               <button onClick={() => void sendControl('pause')} disabled={!debugState.connected || isBusy}>
-                Pause
+                <ButtonLabel icon="pause" text="暂停" />
               </button>
               <button onClick={() => void sendControl('step-over')} disabled={!debugState.connected || isBusy}>
-                Step Over
+                <ButtonLabel icon="step-over" text="越过" />
               </button>
-              <button onClick={() => void sendControl('step-into')} disabled={!debugState.connected || isBusy}>
-                Step Into
-              </button>
-              <button onClick={() => void sendControl('step-out')} disabled={!debugState.connected || isBusy}>
-                Step Out
-              </button>
-              <button onClick={() => void sendControl('reset')} disabled={!debugState.connected || isBusy}>
-                Reset
-              </button>
+              <details className="action-menu">
+                <summary>
+                  <ButtonLabel icon="more" text="更多控制" />
+                </summary>
+                <div className="action-menu-list action-menu-list-inline">
+                  <button onClick={() => void sendControl('step-into')} disabled={!debugState.connected || isBusy}>
+                    <ButtonLabel icon="step-into" text="进入" />
+                  </button>
+                  <button onClick={() => void sendControl('step-out')} disabled={!debugState.connected || isBusy}>
+                    <ButtonLabel icon="step-out" text="跳出" />
+                  </button>
+                  <button onClick={() => void sendControl('reset')} disabled={!debugState.connected || isBusy}>
+                    <ButtonLabel icon="reset" text="复位" />
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
 
           <div className="tab-strip">
             <button className={activeTab === 'editor' ? 'active' : ''} onClick={() => setActiveTab('editor')}>
-              Source
+              源码
             </button>
             <button className={activeTab === 'memory' ? 'active' : ''} onClick={() => setActiveTab('memory')}>
-              Memory Preview
+              内存预览
             </button>
             <button className={activeTab === 'registers' ? 'active' : ''} onClick={() => setActiveTab('registers')}>
-              Register Notes
+              寄存器说明
+            </button>
+            <button className={activeTab === 'logs' ? 'active' : ''} onClick={() => setActiveTab('logs')}>
+              日志
             </button>
           </div>
 
@@ -891,222 +1204,235 @@ function App() {
 
           {activeTab === 'registers' ? (
             <div className="placeholder-card">
-              <h3>Register Notes</h3>
+              <h3>寄存器说明</h3>
               <p>当前版本聚焦于断点、单步、调用栈与全局变量监视/修改，寄存器窗口预留给后续迭代。</p>
               <pre>{formatFrame(debugState.currentFrame)}</pre>
             </div>
           ) : null}
 
-          <div className="log-grid">
-            <section className="log-panel">
-              <div className="panel-header compact">
-                <h3>Build Log</h3>
-                <span>{buildLogs.length} events</span>
-              </div>
-              <pre>{buildLogText || '等待构建输出...'}</pre>
-            </section>
-            <section className="log-panel">
-              <div className="panel-header compact">
-                <h3>Debug Log</h3>
-                <span>{debugLogs.length} events</span>
-              </div>
-              <pre>{debugLogText || '等待调试输出...'}</pre>
-            </section>
-          </div>
+          {activeTab === 'logs' ? (
+            <div className="log-grid">
+              <section className="log-panel">
+                <div className="panel-header compact">
+                  <h3>构建日志</h3>
+                  <span>{buildLogs.length} 条</span>
+                </div>
+                <pre>{buildLogText || '等待构建输出...'}</pre>
+              </section>
+              <section className="log-panel">
+                <div className="panel-header compact">
+                  <h3>调试日志</h3>
+                  <span>{debugLogs.length} 条</span>
+                </div>
+                <pre>{debugLogText || '等待调试输出...'}</pre>
+              </section>
+            </div>
+          ) : null}
         </section>
 
         <aside className="right-panel panel">
-          <section className="panel-section">
-            <div className="panel-header">
-              <div>
-                <h3>Watch + Scope</h3>
-                <span>连续采样与变量修改集中在这一栏</span>
+          <div className="panel-switcher">
+            <button className={rightPanelView === 'watch' ? 'active' : ''} onClick={() => setRightPanelView('watch')}>
+              <ButtonLabel icon="wave" text="监视示波" />
+            </button>
+            <button className={rightPanelView === 'session' ? 'active' : ''} onClick={() => setRightPanelView('session')}>
+              <ButtonLabel icon="stack" text="会话信息" />
+            </button>
+          </div>
+
+          {rightPanelView === 'watch' ? (
+            <section className="panel-section watch-panel">
+              <div className="panel-header">
+                <div>
+                  <h3>监视与示波</h3>
+                  <span>变量编辑、示波器和频率统计集中在这里</span>
+                </div>
+                <div className="watch-badge-group">
+                  <span className={debugState.watchSampling.active ? 'watch-badge live' : 'watch-badge'}>{scopeModeLabel}</span>
+                  <span className="watch-badge accent">{formatFrequency(debugState.watchSampling.achievedHz)}</span>
+                </div>
               </div>
-              <div className="watch-badge-group">
-                <span className={debugState.watchSampling.active ? 'watch-badge live' : 'watch-badge'}>{scopeModeLabel}</span>
-                <span className="watch-badge accent">{formatFrequency(debugState.watchSampling.achievedHz)}</span>
+              <div className="watch-metrics-grid">
+                <article className="metric-card">
+                  <span>示波通道</span>
+                  <strong>{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</strong>
+                  <small>先选中变量，再开启示波</small>
+                </article>
+                <article className="metric-card">
+                  <span>当前频率</span>
+                  <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
+                  <small>按最近 1 秒样本数实时统计</small>
+                </article>
+                <article className="metric-card">
+                  <span>目标频率</span>
+                  <strong>{formatFrequency(debugState.watchSampling.targetHz)}</strong>
+                  <small>当前实现上限 1000 Hz</small>
+                </article>
+                <article className="metric-card">
+                  <span>最近样本</span>
+                  <strong>{formatSampleAge(debugState.watchSampling.lastSampleAt)}</strong>
+                  <small>最新值 {debugState.watchSampling.lastValue || '-'}</small>
+                </article>
               </div>
-            </div>
-            <div className="watch-metrics-grid">
-              <article className="metric-card">
-                <span>Scope Channel</span>
-                <strong>{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</strong>
-                <small>从监视列表中点选一个变量后开启示波</small>
-              </article>
-              <article className="metric-card">
-                <span>当前频率</span>
-                <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
-                <small>实时按最近 1 秒样本数统计</small>
-              </article>
-              <article className="metric-card">
-                <span>目标频率</span>
-                <strong>{formatFrequency(debugState.watchSampling.targetHz)}</strong>
-                <small>当前实现上限 1000 Hz</small>
-              </article>
-              <article className="metric-card">
-                <span>最近样本</span>
-                <strong>{formatSampleAge(debugState.watchSampling.lastSampleAt)}</strong>
-                <small>最新数值 {debugState.watchSampling.lastValue || '-'}</small>
-              </article>
-            </div>
-            <div className="watch-toolbar">
-              <div className="watch-composer">
-                <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="globalCounter" />
-                <button onClick={() => void addWatchExpression()}>Add</button>
-                <button onClick={() => void refreshWatchValues()}>Refresh</button>
+              <div className="watch-toolbar">
+                <div className="watch-composer">
+                  <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="输入变量或表达式" />
+                  <button onClick={() => void addWatchExpression()}>
+                    <ButtonLabel icon="plus" text="添加" />
+                  </button>
+                  <button onClick={() => void refreshWatchValues()}>
+                    <ButtonLabel icon="refresh" text="刷新" />
+                  </button>
+                </div>
+                <div className="sampling-controls">
+                  <label>
+                    <span>示波频率</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={samplingTargetHz}
+                      onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
+                    />
+                  </label>
+                  <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
+                    <ButtonLabel icon="wave" text="开始示波" />
+                  </button>
+                  <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
+                    <ButtonLabel icon="stop" text="停止示波" />
+                  </button>
+                </div>
               </div>
-              <div className="sampling-controls">
-                <label>
-                  <span>Scope Hz</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={1000}
-                    value={samplingTargetHz}
-                    onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
+              <div className="watch-workspace">
+                <div className="watch-column">
+                  <div className="watch-list">
+                    {debugState.watches.length > 0 ? (
+                      debugState.watches.map((entry) => renderWatchRow(entry))
+                    ) : (
+                      <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
+                    )}
+                  </div>
+                  <div className="watch-edit-box">
+                    <label>
+                      <span>已选变量</span>
+                      <input value={selectedWatch} readOnly />
+                    </label>
+                    <label>
+                      <span>新值</span>
+                      <input value={variableValueDraft} onChange={(event) => setVariableValueDraft(event.target.value)} />
+                    </label>
+                    <div className="action-grid single-row">
+                      <button onClick={() => void applyVariableValue()} disabled={!selectedWatch || isBusy}>
+                        <ButtonLabel icon="write" text="写入变量" />
+                      </button>
+                      <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
+                        <ButtonLabel icon="remove" text="移除变量" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="scope-card">
+                  <div className="scope-header">
+                    <div>
+                      <h4>示波器</h4>
+                      <span>{debugState.watchSampling.expression ?? '未挂载变量'}</span>
+                    </div>
+                    <div className="scope-meta">
+                      <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
+                      <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
+                    </div>
+                  </div>
+                  <WatchOscilloscope
+                    expression={debugState.watchSampling.expression}
+                    samples={scopeSamples}
+                    active={debugState.watchSampling.active}
+                    lastNumericValue={debugState.watchSampling.lastNumericValue}
+                    lastError={debugState.watchSampling.lastError}
                   />
-                </label>
-                <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
-                  Start Scope
-                </button>
-                <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
-                  Stop Scope
-                </button>
-              </div>
-            </div>
-            <div className="watch-workspace">
-              <div className="watch-column">
-                <div className="watch-list">
-                  {debugState.watches.length > 0 ? (
-                    debugState.watches.map((entry) => renderWatchRow(entry))
-                  ) : (
-                    <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击 Add。</div>
-                  )}
-                </div>
-                <div className="watch-edit-box">
-                  <label>
-                    <span>Selected Watch</span>
-                    <input value={selectedWatch} readOnly />
-                  </label>
-                  <label>
-                    <span>New Value</span>
-                    <input value={variableValueDraft} onChange={(event) => setVariableValueDraft(event.target.value)} />
-                  </label>
-                  <div className="action-grid single-row">
-                    <button onClick={() => void applyVariableValue()} disabled={!selectedWatch || isBusy}>
-                      Write Variable
-                    </button>
-                    <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
-                      Remove Watch
-                    </button>
-                  </div>
                 </div>
               </div>
-              <div className="scope-card">
-                <div className="scope-header">
-                  <div>
-                    <h4>示波器</h4>
-                    <span>{debugState.watchSampling.expression ?? '未挂载变量'}</span>
-                  </div>
-                  <div className="scope-meta">
-                    <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
-                    <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
-                  </div>
+            </section>
+          ) : (
+            <section className="panel-section session-panel">
+              <div className="panel-header">
+                <div>
+                  <h3>会话信息</h3>
+                  <span>{debugState.lastStopReason ?? '当前没有停止原因'}</span>
                 </div>
-                <WatchOscilloscope
-                  expression={debugState.watchSampling.expression}
-                  samples={scopeSamples}
-                  active={debugState.watchSampling.active}
-                  lastNumericValue={debugState.watchSampling.lastNumericValue}
-                  lastError={debugState.watchSampling.lastError}
-                />
+                <span className="watch-badge">{formatSessionStatus(debugState.status)}</span>
               </div>
-            </div>
-          </section>
+              <div className="stack-list">
+                {debugState.stack.map((frame) => (
+                  <button
+                    key={`${frame.level}-${frame.functionName}-${frame.line}`}
+                    className={debugState.currentFrame?.level === frame.level ? 'stack-row active' : 'stack-row'}
+                    onClick={() => {
+                      if (!frame.fullPath) {
+                        return
+                      }
 
-          <section className="panel-section">
-            <div className="panel-header">
-              <h3>Call Stack</h3>
-              <span>{debugState.lastStopReason ?? 'idle'}</span>
-            </div>
-            <div className="stack-list">
-              {debugState.stack.map((frame) => (
-                <button
-                  key={`${frame.level}-${frame.functionName}-${frame.line}`}
-                  className={debugState.currentFrame?.level === frame.level ? 'stack-row active' : 'stack-row'}
-                  onClick={() => {
-                    if (!frame.fullPath) {
-                      return
-                    }
-
-                    void openFile({
-                      name: frame.file ?? frame.fullPath,
-                      path: frame.fullPath,
-                      relativePath: frame.file ?? frame.fullPath,
-                      language: 'c',
-                    })
-                  }}
-                >
-                  <strong>{frame.functionName}</strong>
-                  <span>{frame.file ? `${frame.file}:${frame.line ?? '-'}` : frame.address ?? 'unknown'}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel-section">
-            <div className="panel-header">
-              <h3>Session Snapshot</h3>
-              <span>{debugState.status}</span>
-            </div>
-            <dl className="summary-grid">
-              <div>
-                <dt>Current Frame</dt>
-                <dd>{formatFrame(debugState.currentFrame)}</dd>
+                      void openFile({
+                        name: frame.file ?? frame.fullPath,
+                        path: frame.fullPath,
+                        relativePath: frame.file ?? frame.fullPath,
+                        language: 'c',
+                      })
+                    }}
+                  >
+                    <strong>{frame.functionName}</strong>
+                    <span>{frame.file ? `${frame.file}:${frame.line ?? '-'}` : frame.address ?? 'unknown'}</span>
+                  </button>
+                ))}
+                {debugState.stack.length === 0 ? <div className="empty-list-state">当前没有可显示的调用栈。</div> : null}
               </div>
-              <div>
-                <dt>Breakpoints</dt>
-                <dd>{debugState.breakpoints.length}</dd>
-              </div>
-              <div>
-                <dt>Node</dt>
-                <dd>{environment.nodeVersion || '-'}</dd>
-              </div>
-              <div>
-                <dt>CMake</dt>
-                <dd>{profile.cmakePath}</dd>
-              </div>
-              <div>
-                <dt>GDB</dt>
-                <dd>{profile.gdbPath}</dd>
-              </div>
-              <div>
-                <dt>OpenOCD</dt>
-                <dd>{profile.openOcdPath}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section className="panel-section">
-            <div className="panel-header">
-              <h3>Host Diagnostics</h3>
-              <span>{environmentCheck.ready ? 'Ready' : 'Missing tools'}</span>
-            </div>
-            <div className="diagnostic-list">
-              {environmentCheck.tools.map((tool) => (
-                <div key={tool.command} className="diagnostic-item">
-                  <div className="diagnostic-topline">
-                    <strong>{tool.name}</strong>
-                    <span className={tool.found ? 'diagnostic-badge ok' : 'diagnostic-badge bad'}>
-                      {tool.found ? 'FOUND' : 'MISSING'}
-                    </span>
-                  </div>
-                  <p>{tool.version ?? tool.installHint}</p>
-                  <small>{tool.resolvedPath ?? tool.installHint}</small>
+              <dl className="summary-grid">
+                <div>
+                  <dt>当前栈帧</dt>
+                  <dd>{formatFrame(debugState.currentFrame)}</dd>
                 </div>
-              ))}
-            </div>
-          </section>
+                <div>
+                  <dt>断点数</dt>
+                  <dd>{debugState.breakpoints.length}</dd>
+                </div>
+                <div>
+                  <dt>Node</dt>
+                  <dd>{environment.nodeVersion || '-'}</dd>
+                </div>
+                <div>
+                  <dt>CMake</dt>
+                  <dd>{profile.cmakePath}</dd>
+                </div>
+                <div>
+                  <dt>GDB</dt>
+                  <dd>{profile.gdbPath}</dd>
+                </div>
+                <div>
+                  <dt>OpenOCD</dt>
+                  <dd>{profile.openOcdPath}</dd>
+                </div>
+              </dl>
+
+              <details className="collapse-card">
+                <summary>
+                  <ButtonLabel icon="tool" text="环境诊断" />
+                </summary>
+                <div className="collapse-card-body diagnostic-list">
+                  {environmentCheck.tools.map((tool) => (
+                    <div key={tool.command} className="diagnostic-item">
+                      <div className="diagnostic-topline">
+                        <strong>{tool.name}</strong>
+                        <span className={tool.found ? 'diagnostic-badge ok' : 'diagnostic-badge bad'}>
+                          {tool.found ? '已找到' : '缺失'}
+                        </span>
+                      </div>
+                      <p>{tool.version ?? tool.installHint}</p>
+                      <small>{tool.resolvedPath ?? tool.installHint}</small>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </section>
+          )}
         </aside>
       </main>
     </div>
