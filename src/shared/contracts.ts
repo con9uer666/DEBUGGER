@@ -9,6 +9,10 @@ export interface FileDialogRequest {
   filters?: FileDialogFilter[]
 }
 
+export type DebuggerPreset = 'custom' | 'daplink' | 'cmsis-dap' | 'stlink' | 'jlink'
+
+export type DebugConfigPreset = 'flash-run-main' | 'flash-reset-halt' | 'attach-reset-halt' | 'attach-live' | 'custom'
+
 export interface ProjectProfile {
   projectRoot: string
   buildDir: string
@@ -19,6 +23,8 @@ export interface ProjectProfile {
   configureArgs: string
   buildTarget: string
   jobs: number
+  debuggerPreset: DebuggerPreset
+  debugConfigPreset: DebugConfigPreset
   openOcdPath: string
   openOcdConfig: string
   gdbPath: string
@@ -225,6 +231,8 @@ export const defaultProjectProfile: ProjectProfile = {
   configureArgs: '',
   buildTarget: '',
   jobs: 8,
+  debuggerPreset: 'custom',
+  debugConfigPreset: 'flash-run-main',
   openOcdPath: 'openocd',
   openOcdConfig: '',
   gdbPath: 'arm-none-eabi-gdb',

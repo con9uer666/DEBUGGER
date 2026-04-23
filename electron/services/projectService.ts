@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type {
+  DebuggerPreset,
   OpenFileResult,
   ProjectFileEntry,
   ProjectProfile,
@@ -113,6 +114,23 @@ function splitOpenOcdConfig(openOcdConfig: string) {
     .filter(Boolean)
 }
 
+const debuggerPresetConfigs: Record<Exclude<DebuggerPreset, 'custom'>, string[]> = {
+  daplink: ['interface/cmsis-dap.cfg'],
+  'cmsis-dap': ['interface/cmsis-dap.cfg'],
+  stlink: ['interface/stlink.cfg'],
+  jlink: ['interface/jlink.cfg'],
+}
+
+function composeOpenOcdConfig(profile: Pick<ProjectProfile, 'debuggerPreset' | 'openOcdConfig'>) {
+  const userConfig = splitOpenOcdConfig(profile.openOcdConfig)
+
+  if (profile.debuggerPreset === 'custom') {
+    return userConfig
+  }
+
+  return [...debuggerPresetConfigs[profile.debuggerPreset], ...userConfig]
+}
+
 export async function generateVsCodeFiles(profile: ProjectProfile) {
   const vscodeDirectory = path.join(profile.projectRoot, '.vscode')
   await mkdir(vscodeDirectory, { recursive: true })
@@ -122,7 +140,7 @@ export async function generateVsCodeFiles(profile: ProjectProfile) {
     ? resolveProjectPath(profile.projectRoot, profile.toolchainFile, '')
     : ''
   const elfFile = resolveProjectPath(profile.projectRoot, profile.elfFile, '')
-  const openOcdFiles = splitOpenOcdConfig(profile.openOcdConfig).map((entry) =>
+  const openOcdFiles = composeOpenOcdConfig(profile).map((entry) =>
     toWorkspacePath(profile.projectRoot, resolveProjectPath(profile.projectRoot, entry, entry)),
   )
 

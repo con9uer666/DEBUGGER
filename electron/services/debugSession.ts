@@ -7,6 +7,7 @@ import {
   type CommandResult,
   type DebugBreakpoint,
   type DebugControlCommand,
+  type DebuggerPreset,
   type DebugSessionState,
   type LogEvent,
   type StackFrame,
@@ -73,6 +74,23 @@ function splitOpenOcdConfig(value: string) {
     .split(/[;,\r\n]+/)
     .map((entry) => entry.trim())
     .filter(Boolean)
+}
+
+const debuggerPresetConfigs: Record<Exclude<DebuggerPreset, 'custom'>, string[]> = {
+  daplink: ['interface/cmsis-dap.cfg'],
+  'cmsis-dap': ['interface/cmsis-dap.cfg'],
+  stlink: ['interface/stlink.cfg'],
+  jlink: ['interface/jlink.cfg'],
+}
+
+function composeOpenOcdConfigEntries(request: Pick<StartDebugRequest, 'debuggerPreset' | 'openOcdConfig'>) {
+  const userConfig = splitOpenOcdConfig(request.openOcdConfig)
+
+  if (request.debuggerPreset === 'custom') {
+    return userConfig
+  }
+
+  return [...debuggerPresetConfigs[request.debuggerPreset], ...userConfig]
 }
 
 function quoteMiString(value: string) {
@@ -674,7 +692,7 @@ export class DebugSession {
 
   private async startOpenOcd(request: StartDebugRequest) {
     const executable = request.openOcdPath.trim() || 'openocd'
-    const configFiles = splitOpenOcdConfig(request.openOcdConfig)
+    const configFiles = composeOpenOcdConfigEntries(request)
 
     if (configFiles.length === 0) {
       throw new Error('OpenOCD config is required.')
@@ -903,7 +921,11 @@ export class DebugSession {
       throw new Error('ELF file is required.')
     }
 
-    if (!request.openOcdConfig.trim()) {
+    if (request.debuggerPreset !== 'custom' && !request.openOcdConfig.trim()) {
+      throw new Error('请补充目标板的 OpenOCD 配置，例如 target/stm32f4x.cfg 或 board/st_nucleo_f4.cfg。')
+    }
+
+    if (composeOpenOcdConfigEntries(request).length === 0) {
       throw new Error('OpenOCD config is required.')
     }
 
