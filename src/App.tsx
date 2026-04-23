@@ -451,17 +451,29 @@ function mapBreakpointsByFile(debugState: DebugSessionState) {
   return result
 }
 
-function flattenWatchRows(watches: WatchValue[]) {
-  const rows: WatchValue[] = []
+interface FlattenedWatchRow {
+  entry: WatchValue
+  treeContinuations: boolean[]
+  isLast: boolean
+}
 
-  function visit(entries: WatchValue[]) {
-    for (const entry of entries) {
-      rows.push(entry)
+function flattenWatchRows(watches: WatchValue[]) {
+  const rows: FlattenedWatchRow[] = []
+
+  function visit(entries: WatchValue[], treeContinuations: boolean[] = []) {
+    entries.forEach((entry, index) => {
+      const isLast = index === entries.length - 1
+
+      rows.push({
+        entry,
+        treeContinuations,
+        isLast,
+      })
 
       if (entry.children && entry.children.length > 0) {
-        visit(entry.children)
+        visit(entry.children, [...treeContinuations, !isLast])
       }
-    }
+    })
   }
 
   visit(watches)
@@ -518,7 +530,7 @@ function App() {
       return
     }
 
-    if (visibleWatchRows.some((entry) => entry.expression === selectedWatch)) {
+    if (visibleWatchRows.some((row) => row.entry.expression === selectedWatch)) {
       return
     }
 
@@ -596,39 +608,36 @@ function App() {
     }
 
     const monaco = monacoRef.current
-    const activeBreakpoints = [...(breakpointMap.get(activeFile.path) ?? new Set<number>())]
-    const decorations = [
-      ...activeBreakpoints.map((line) => ({
-        range: new monaco.Range(line, 1, line, 1),
-        options: {
-          isWholeLine: true,
-          glyphMarginClassName: 'editor-breakpoint-glyph',
-          glyphMarginHoverMessage: { value: `Breakpoint at line ${line}` },
-          className: 'editor-breakpoint-line',
-        },
-      })),
-      ...(() => {
-        const frame = debugState.currentFrame
+    const activeBreakpoints = breakpointMap.get(activeFile.path) ?? new Set<number>()
+    const frame = debugState.currentFrame
+    const currentLine = frame && frame.fullPath === activeFile.path ? frame.line : null
+    const decoratedLines = new Set<number>(activeBreakpoints)
 
-        if (!frame || !frame.fullPath || !frame.line || frame.fullPath !== activeFile.path) {
-          return []
-        }
+    if (currentLine) {
+      decoratedLines.add(currentLine)
+      editorRef.current?.revealLineInCenter(currentLine)
+    }
 
-        editorRef.current?.revealLineInCenter(frame.line)
+    const decorations = [...decoratedLines]
+      .sort((left, right) => left - right)
+      .map((line) => {
+        const hasBreakpoint = activeBreakpoints.has(line)
+        const isCurrentLine = currentLine === line
+        const classNames = [hasBreakpoint ? 'editor-breakpoint-line' : '', isCurrentLine ? 'editor-current-line' : '']
+          .filter(Boolean)
+          .join(' ')
 
-        return [
-          {
-            range: new monaco.Range(frame.line, 1, frame.line, 1),
-            options: {
-              isWholeLine: true,
-              glyphMarginClassName: 'editor-current-line-glyph',
-              glyphMarginHoverMessage: { value: 'Current execution line' },
-              className: 'editor-current-line',
-            },
+        return {
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            glyphMarginClassName: hasBreakpoint ? 'editor-breakpoint-glyph' : undefined,
+            glyphMarginHoverMessage: hasBreakpoint ? { value: `断点：第 ${line} 行` } : undefined,
+            linesDecorationsClassName: isCurrentLine ? 'editor-current-line-arrows' : undefined,
+            className: classNames || undefined,
           },
-        ]
-      })(),
-    ]
+        }
+      })
 
     decorationIdsRef.current = editorRef.current.deltaDecorations(decorationIdsRef.current, decorations)
   }, [activeFile, breakpointMap, debugState.currentFrame, editorReady])
@@ -800,7 +809,11 @@ function App() {
     setEditorReady(true)
 
     editor.onMouseDown((event) => {
-      if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+      if (
+        event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+        event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS &&
+        event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
+      ) {
         return
       }
 
@@ -924,7 +937,8 @@ function App() {
     cancelWatchEdit()
   }
 
-  function renderWatchRow(entry: WatchValue) {
+  function renderWatchRow(row: FlattenedWatchRow) {
+    const { entry, isLast, treeContinuations } = row
     const isSelected = selectedWatch === entry.expression
     const isScoped = debugState.watchSampling.expression === entry.expression
     const hintText = entry.error
@@ -936,6 +950,8 @@ function App() {
         : '点击后可编辑或挂到示波器'
 
     const isEditing = editingWatchExpression === entry.expression
+    const labelText = entry.level === 0 ? entry.expression : entry.displayName
+    const nameMetaClassName = entry.level === 0 ? 'watch-name-meta root' : 'watch-name-meta'
 
     return (
       <tr
@@ -947,7 +963,13 @@ function App() {
         }}
       >
         <td>
-          <div className="watch-name-cell" style={{ paddingLeft: `${entry.level * 16}px` }}>
+          <div className="watch-name-cell" title={entry.expression}>
+            <div className="watch-tree-rails" aria-hidden="true">
+              {treeContinuations.slice(0, -1).map((continued, index) => (
+                <span key={`${entry.expression}-guide-${index}`} className={continued ? 'watch-tree-guide continued' : 'watch-tree-guide'} />
+              ))}
+              {entry.level > 0 ? <span className={isLast ? 'watch-tree-branch last' : 'watch-tree-branch'} /> : null}
+            </div>
             {entry.expandable ? (
               <button
                 type="button"
@@ -957,21 +979,22 @@ function App() {
                   void toggleWatchExpansion(entry)
                 }}
               >
-                {entry.expanded ? '▾' : '▸'}
+                {entry.expanded ? '−' : '+'}
               </button>
             ) : (
               <span className="watch-expander spacer" />
             )}
-            <div className="watch-name-meta">
-              <strong>{entry.displayName}</strong>
+            <div className={nameMetaClassName}>
+              <strong>{labelText}</strong>
               <small>{entry.type ?? hintText}</small>
             </div>
             {isScoped ? <small className="scope-chip">示波</small> : null}
           </div>
         </td>
         <td
-          className={entry.editable && !entry.error ? 'watch-value-cell editable' : 'watch-value-cell'}
+          className={entry.editable && !entry.error ? 'watch-value-cell editable' : entry.error ? 'watch-value-cell error' : 'watch-value-cell'}
           onDoubleClick={() => beginWatchEdit(entry)}
+          title={entry.error ? entry.error : entry.value}
         >
           {isEditing ? (
             <input
@@ -1271,6 +1294,7 @@ function App() {
                 options={{
                   glyphMargin: true,
                   fontSize: 13,
+                  lineDecorationsWidth: 18,
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
                   readOnly: true,
@@ -1332,7 +1356,7 @@ function App() {
               <div className="panel-header">
                 <div>
                   <h3>监视与示波</h3>
-                  <span>监视变量、结构体/class 展开和示波器都从这里进入</span>
+                  <span>变量树、直接改值和示波器</span>
                 </div>
                 <div className="watch-badge-group">
                   <span className={debugState.watchSampling.active ? 'watch-badge live' : 'watch-badge'}>{scopeModeLabel}</span>
@@ -1377,11 +1401,15 @@ function App() {
                   <div className="watch-table-card watch-card">
                     <div className="subsection-header">
                       <strong>监视表</strong>
-                      <span>双击右侧值单元格可直接修改，结构体和 class 可展开</span>
+                      <span>双击值可修改，结构体/class/数组可展开</span>
                     </div>
                     {visibleWatchRows.length > 0 ? (
                       <div className="watch-table-wrap">
                         <table className="watch-table">
+                          <colgroup>
+                            <col className="watch-name-column" />
+                            <col className="watch-value-column" />
+                          </colgroup>
                           <thead>
                             <tr>
                               <th>变量名</th>
