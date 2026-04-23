@@ -333,6 +333,62 @@ body.sidebar-resizing {
   grid-template-columns: minmax(0, 1.35fr) auto minmax(0, 120px) minmax(0, 120px) repeat(4, auto);
 }
 
+.scope-controls-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scope-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.scope-control-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scope-control-field-wide {
+  grid-column: span 2;
+}
+
+.scope-control-field span,
+.scope-toggle-field span {
+  white-space: nowrap;
+}
+
+.scope-toggle-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(4, 10, 18, 0.52);
+  padding: 8px 10px;
+  color: var(--text-primary);
+}
+
+.scope-toggle-field input {
+  width: auto;
+  margin: 0;
+}
+
+.scope-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.scope-action-row button {
+  flex: 0 0 auto;
+}
+
 .button-label {
   display: inline-flex;
   align-items: center;
@@ -360,7 +416,9 @@ body.sidebar-resizing {
 .form-panel textarea,
 .watch-composer input,
 .watch-edit-box input,
-.sampling-controls input {
+.sampling-controls input,
+.scope-control-field input,
+.scope-control-field select {
   width: 100%;
   box-sizing: border-box;
 }
@@ -1427,6 +1485,18 @@ button:disabled {
 
   .sampling-controls-wide {
     grid-template-columns: 1fr;
+  }
+
+  .scope-controls-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scope-control-field-wide {
+    grid-column: span 1;
+  }
+
+  .scope-action-row button {
+    flex: 1 1 140px;
   }
 
   .scope-channel-item,

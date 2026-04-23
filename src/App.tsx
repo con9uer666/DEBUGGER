@@ -356,9 +356,13 @@ interface WatchOscilloscopeProps {
   active: boolean
   timebaseMs: number
   statusMessage: string | null
+  autoScale: boolean
+  manualScale: number
+  autoOffset: boolean
+  manualOffset: number
 }
 
-function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchOscilloscopeProps) {
+function WatchOscilloscope({ traces, active, timebaseMs, statusMessage, autoScale, manualScale, autoOffset, manualOffset }: WatchOscilloscopeProps) {
   const geometry = useMemo(() => {
     const paddingLeft = 56
     const paddingRight = 16
@@ -400,16 +404,20 @@ function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchO
 
     const minValue = Math.min(...values)
     const maxValue = Math.max(...values)
-    const span = maxValue - minValue || Math.max(Math.abs(maxValue), 1)
-    const paddedMin = minValue - span * 0.12
-    const paddedMax = maxValue + span * 0.12
-    const paddedSpan = paddedMax - paddedMin || 1
+    const sourceSpan = maxValue - minValue || Math.max(Math.abs(maxValue), 1)
+    const autoSpan = sourceSpan * 1.24 || Math.max(Math.abs(maxValue), 1) * 1.24
+    const visibleSpan = autoScale ? autoSpan : Math.max(0.0001, Math.abs(manualScale) || autoSpan)
+    const autoCenter = (minValue + maxValue) / 2
+    const visibleCenter = autoOffset ? autoCenter : manualOffset
+    const visibleMin = visibleCenter - visibleSpan / 2
+    const visibleMax = visibleCenter + visibleSpan / 2
+    const visibleRange = visibleMax - visibleMin || 1
     const plottedTraces = visibleTraces.map((trace) => {
       const points = trace.samples
         .map((sample) => {
           const ratio = Math.min(1, Math.max(0, (sample.timestamp - windowStart) / Math.max(1, timebaseMs)))
           const x = paddingLeft + ratio * plotWidth
-          const normalized = (sample.value - paddedMin) / paddedSpan
+          const normalized = (sample.value - visibleMin) / visibleRange
           const y = paddingTop + (1 - normalized) * plotHeight
           return `${x.toFixed(2)},${y.toFixed(2)}`
         })
@@ -419,7 +427,7 @@ function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchO
       const lastPoint = lastSample
         ? {
             x: paddingLeft + Math.min(1, Math.max(0, (lastSample.timestamp - windowStart) / Math.max(1, timebaseMs))) * plotWidth,
-            y: paddingTop + (1 - (lastSample.value - paddedMin) / paddedSpan) * plotHeight,
+            y: paddingTop + (1 - (lastSample.value - visibleMin) / visibleRange) * plotHeight,
           }
         : null
 
@@ -434,7 +442,7 @@ function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchO
       const ratio = index / 4
       return {
         y: paddingTop + plotHeight * ratio,
-        label: formatNumericValue(paddedMax - paddedSpan * ratio),
+        label: formatNumericValue(visibleMax - visibleRange * ratio),
       }
     })
 
@@ -456,7 +464,7 @@ function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchO
       paddingTop,
       paddingBottom,
     }
-  }, [timebaseMs, traces])
+  }, [autoOffset, autoScale, manualOffset, manualScale, timebaseMs, traces])
 
   if (traces.length === 0) {
     return <div className="scope-empty">先把变量加入示波器，再开始采样。</div>
@@ -507,6 +515,8 @@ function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchO
       </svg>
       <div className="scope-footer">
         <span>时基 {formatScopeTimebase(timebaseMs)}</span>
+        <span>{autoScale ? '纵轴自动缩放' : `纵轴量程 ${formatNumericValue(Math.abs(manualScale))}`}</span>
+        <span>{autoOffset ? '纵轴自动偏移' : `纵轴偏移 ${formatNumericValue(manualOffset)}`}</span>
         <span>{active ? '正在连续采样' : '示波已暂停'}</span>
         {traces.map((trace) => (
           <span key={trace.expression} className="scope-legend-item" style={{ '--scope-trace-color': trace.color } as CSSProperties}>
@@ -725,6 +735,10 @@ function App() {
   const [scopeExpressionDraft, setScopeExpressionDraft] = useState('')
   const [samplingTargetHz, setSamplingTargetHz] = useState(1000)
   const [scopeTimebaseMs, setScopeTimebaseMs] = useState(1000)
+  const [scopeAutoScale, setScopeAutoScale] = useState(true)
+  const [scopeManualScale, setScopeManualScale] = useState(100)
+  const [scopeAutoOffset, setScopeAutoOffset] = useState(true)
+  const [scopeManualOffset, setScopeManualOffset] = useState(0)
   const [statusText, setStatusText] = useState('就绪')
   const [isBusy, setIsBusy] = useState(false)
   const [editorReady, setEditorReady] = useState(false)
@@ -1848,8 +1862,9 @@ function App() {
   function renderScopeView(detached = false) {
     return (
       <div className={detached ? 'watch-tab-content detached-watch-tab-content' : 'watch-tab-content'}>
-        <div className="sampling-controls watch-card sampling-controls-wide">
-          <label>
+        <div className="watch-card scope-controls-card">
+          <div className="scope-controls-grid">
+            <label className="scope-control-field scope-control-field-wide">
             <span>加入变量</span>
             <select value={scopeExpressionDraft} onChange={(event) => setScopeExpressionDraft(event.target.value)}>
               <option value="">请选择变量</option>
@@ -1859,44 +1874,76 @@ function App() {
                 </option>
               ))}
             </select>
-          </label>
-          <button onClick={() => void addScopeExpression(scopeExpressionDraft)} disabled={!scopeExpressionDraft || isBusy}>
-            <ButtonLabel icon="plus" text="加入曲线" />
-          </button>
-          <label>
-            <span>示波频率</span>
-            <input
-              type="number"
-              min={1}
-              max={1000}
-              value={samplingTargetHz}
-              onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
-            />
-          </label>
-          <label>
-            <span>时基</span>
-            <select value={scopeTimebaseMs} onChange={(event) => setScopeTimebaseMs(Number(event.target.value || '1000'))}>
-              {SCOPE_TIMEBASE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {formatScopeTimebase(option)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button onClick={() => void configureWatchSampling(true)} disabled={!debugState.watchSampling.expressions.length || isBusy}>
-            <ButtonLabel icon="wave" text="开始示波" />
-          </button>
-          <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
-            <ButtonLabel icon="stop" text="停止示波" />
-          </button>
-          <button onClick={() => void setScopeExpressions([], false, '示波通道已清空')} disabled={!debugState.watchSampling.expressions.length || isBusy}>
-            <ButtonLabel icon="remove" text="清空曲线" />
-          </button>
-          {!detached ? (
-            <button onClick={() => void openDetachedPanel('watch-scope')} disabled={!selectableWatchExpressions.length}>
-              <ButtonLabel icon="popout" text="独立窗口" />
+            </label>
+            <button onClick={() => void addScopeExpression(scopeExpressionDraft)} disabled={!scopeExpressionDraft || isBusy}>
+              <ButtonLabel icon="plus" text="加入曲线" />
             </button>
-          ) : null}
+            <label className="scope-control-field">
+              <span>示波频率</span>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                value={samplingTargetHz}
+                onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
+              />
+            </label>
+            <label className="scope-control-field">
+              <span>时基</span>
+              <select value={scopeTimebaseMs} onChange={(event) => setScopeTimebaseMs(Number(event.target.value || '1000'))}>
+                {SCOPE_TIMEBASE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {formatScopeTimebase(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="scope-toggle-field">
+              <input type="checkbox" checked={scopeAutoScale} onChange={(event) => setScopeAutoScale(event.target.checked)} />
+              <span>纵轴自动缩放</span>
+            </label>
+            <label className="scope-control-field">
+              <span>纵轴量程</span>
+              <input
+                type="number"
+                min={0.0001}
+                step="any"
+                value={scopeManualScale}
+                disabled={scopeAutoScale}
+                onChange={(event) => setScopeManualScale(Math.max(0.0001, Number(event.target.value || '0.0001')))}
+              />
+            </label>
+            <label className="scope-toggle-field">
+              <input type="checkbox" checked={scopeAutoOffset} onChange={(event) => setScopeAutoOffset(event.target.checked)} />
+              <span>纵轴自动偏移</span>
+            </label>
+            <label className="scope-control-field">
+              <span>纵轴偏移</span>
+              <input
+                type="number"
+                step="any"
+                value={scopeManualOffset}
+                disabled={scopeAutoOffset}
+                onChange={(event) => setScopeManualOffset(Number(event.target.value || '0'))}
+              />
+            </label>
+          </div>
+          <div className="scope-action-row">
+            <button onClick={() => void configureWatchSampling(true)} disabled={!debugState.watchSampling.expressions.length || isBusy}>
+              <ButtonLabel icon="wave" text="开始示波" />
+            </button>
+            <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
+              <ButtonLabel icon="stop" text="停止示波" />
+            </button>
+            <button onClick={() => void setScopeExpressions([], false, '示波通道已清空')} disabled={!debugState.watchSampling.expressions.length || isBusy}>
+              <ButtonLabel icon="remove" text="清空曲线" />
+            </button>
+            {!detached ? (
+              <button onClick={() => void openDetachedPanel('watch-scope')} disabled={!selectableWatchExpressions.length}>
+                <ButtonLabel icon="popout" text="独立窗口" />
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="scope-channel-list watch-card">
           {scopeTraceViews.length > 0 ? (
@@ -1935,6 +1982,10 @@ function App() {
             active={debugState.watchSampling.active}
             timebaseMs={scopeTimebaseMs}
             statusMessage={debugState.watchSampling.lastError}
+            autoScale={scopeAutoScale}
+            manualScale={scopeManualScale}
+            autoOffset={scopeAutoOffset}
+            manualOffset={scopeManualOffset}
           />
         </div>
       </div>
