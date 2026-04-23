@@ -6,6 +6,7 @@ import type {
   LogEvent,
   StartDebugRequest,
   Stm32DebugApi,
+  WatchExpansionRequest,
   WatchSampleBatch,
   WatchSamplingRequest,
 } from '../src/shared/contracts'
@@ -67,6 +68,9 @@ const api: Stm32DebugApi = {
   },
   setWatchExpressions(expressions: string[]) {
     return ipcRenderer.invoke('debug:setWatchExpressions', expressions)
+  },
+  setWatchExpansion(request: WatchExpansionRequest) {
+    return ipcRenderer.invoke('debug:setWatchExpansion', request)
   },
   configureWatchSampling(request: WatchSamplingRequest) {
     return ipcRenderer.invoke('debug:configureWatchSampling', request)
