@@ -2,8 +2,8 @@
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -41,22 +41,23 @@
 .placeholder-card {
   background: var(--panel-bg);
   backdrop-filter: blur(14px);
+  position: relative;
 }
 
 .topbar {
-  border-radius: 22px;
-  padding: 16px 20px;
+  border-radius: 18px;
+  padding: 10px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
+  gap: 14px;
 }
 
 .eyebrow {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-size: 11px;
+  letter-spacing: 0.18em;
+  font-size: 10px;
   color: var(--muted-text);
 }
 
@@ -67,20 +68,25 @@
   margin: 0;
 }
 
+.topbar h1 {
+  font-size: 24px;
+  line-height: 1.08;
+}
+
 .status-pill-group {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .status-pill {
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 6px 10px;
   background: rgba(255, 255, 255, 0.03);
   color: var(--muted-text);
-  font-size: 12px;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -95,62 +101,96 @@
 }
 
 .hero-panel {
-  border-radius: 22px;
-  padding: 18px 20px;
+  border-radius: 18px;
+  padding: 12px 14px;
   display: flex;
   justify-content: space-between;
-  gap: 24px;
-  align-items: flex-start;
+  gap: 16px;
+  align-items: center;
+  z-index: 2;
 }
 
 .hero-panel p {
-  margin: 10px 0 0;
-  max-width: 820px;
+  margin: 4px 0 0;
+  max-width: 640px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hero-panel h2 {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.hero-copy {
+  min-width: 0;
 }
 
 .hero-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(330px, 400px);
-  gap: 18px;
+  grid-template-columns: minmax(280px, 332px) minmax(0, 1fr) minmax(300px, 352px);
+  gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
 .panel {
-  border-radius: 22px;
-  padding: 18px;
+  border-radius: 18px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-height: 0;
   overflow: hidden;
 }
 
 .panel-section {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(11, 20, 31, 0.78);
-  padding: 16px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
+  position: relative;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   align-items: baseline;
+}
+
+.panel-header > div {
+  min-width: 0;
+}
+
+.panel-header h3,
+.placeholder-card h3 {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.panel-header span,
+.subsection-header span,
+.summary-grid dt,
+.file-item small,
+.stack-row span,
+.hint-list,
+.placeholder-card p {
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .panel-header span,
@@ -185,14 +225,14 @@
 .single-row,
 .diagnostic-topline {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .panel-switcher,
 .toolbar-buttons,
 .primary-action-strip {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -212,7 +252,7 @@
 .mini-tab-strip,
 .watch-summary-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -254,12 +294,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .button-icon {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex: none;
 }
 
@@ -289,11 +329,12 @@ button {
 
 input,
 textarea {
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(4, 10, 18, 0.84);
   color: var(--text-primary);
-  padding: 10px 12px;
+  padding: 8px 10px;
+  font-size: 13px;
 }
 
 textarea {
@@ -301,16 +342,18 @@ textarea {
 }
 
 button {
-  border-radius: 12px;
+  border-radius: 10px;
   background: linear-gradient(180deg, rgba(248, 183, 73, 0.15), rgba(248, 183, 73, 0.06));
   color: var(--text-primary);
-  padding: 10px 12px;
+  padding: 8px 10px;
+  font-size: 13px;
   cursor: pointer;
   transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
 .action-menu {
   position: relative;
+  z-index: 5;
 }
 
 .action-menu > summary,
@@ -321,10 +364,11 @@ button {
 }
 
 .action-menu > summary {
-  border-radius: 12px;
+  border-radius: 10px;
   background: linear-gradient(180deg, rgba(248, 183, 73, 0.15), rgba(248, 183, 73, 0.06));
   color: var(--text-primary);
-  padding: 10px 12px;
+  padding: 8px 10px;
+  font-size: 13px;
 }
 
 .action-menu > summary::-webkit-details-marker,
@@ -334,44 +378,58 @@ button {
 
 .action-menu-list {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   right: 0;
-  z-index: 20;
-  min-width: 210px;
+  z-index: 120;
+  min-width: 180px;
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 16px;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 16, 27, 0.96);
   box-shadow: var(--shadow-soft);
 }
 
+.action-menu[open] {
+  z-index: 90;
+}
+
+.hero-panel:has(.action-menu[open]),
+.panel:has(.action-menu[open]),
+.panel-section:has(.action-menu[open]),
+.watch-card:has(.action-menu[open]),
+.editor-toolbar:has(.action-menu[open]) {
+  z-index: 70;
+  overflow: visible;
+}
+
 .action-menu-list-inline {
-  min-width: 190px;
+  min-width: 168px;
 }
 
 .watch-card {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(6, 14, 24, 0.82);
-  padding: 14px;
+  padding: 12px;
+  position: relative;
 }
 
 .collapse-card {
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(6, 14, 24, 0.72);
   overflow: hidden;
 }
 
 .collapse-card > summary {
-  padding: 12px 14px;
+  padding: 10px 12px;
 }
 
 .collapse-card-body {
   display: grid;
-  gap: 12px;
-  padding: 0 14px 14px;
+  gap: 10px;
+  padding: 0 12px 12px;
 }
 
 .collapse-card.subtle {
@@ -402,8 +460,8 @@ button:disabled {
   margin: 0;
   padding-left: 18px;
   display: grid;
-  gap: 8px;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12px;
 }
 
 .file-browser,
@@ -439,12 +497,12 @@ button:disabled {
 .stack-row,
 .watch-row {
   background: rgba(255, 255, 255, 0.02);
-  border-radius: 14px;
-  padding: 12px;
+  border-radius: 12px;
+  padding: 10px;
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .watch-row strong {
@@ -464,7 +522,7 @@ button:disabled {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(4, 10, 18, 0.5);
 }
@@ -480,8 +538,8 @@ button:disabled {
   top: 0;
   z-index: 1;
   text-align: left;
-  padding: 12px 14px;
-  font-size: 12px;
+  padding: 10px 12px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-text);
@@ -489,7 +547,7 @@ button:disabled {
 }
 
 .watch-table tbody td {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   vertical-align: middle;
 }
@@ -533,11 +591,11 @@ button:disabled {
 }
 
 .watch-expander {
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -562,19 +620,19 @@ button:disabled {
 .watch-table-footer {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
   flex-wrap: wrap;
   color: var(--muted-text);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .watch-summary-pill {
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted-text);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .watch-row small,
@@ -592,9 +650,9 @@ button:disabled {
 .subsection-header {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   align-items: baseline;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .watch-row-topline {
@@ -607,8 +665,8 @@ button:disabled {
 .scope-chip,
 .watch-badge {
   border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 3px 8px;
+  font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   background: rgba(255, 255, 255, 0.05);
@@ -616,7 +674,7 @@ button:disabled {
 
 .watch-badge-group {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -665,20 +723,27 @@ button:disabled {
 .tab-strip,
 .mini-tab-strip {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+}
+
+.tab-strip button,
+.mini-tab-strip button,
+.panel-switcher button {
+  padding: 7px 10px;
+  font-size: 12px;
 }
 
 .editor-surface {
   min-height: 0;
   flex: 1;
-  border-radius: 18px;
+  border-radius: 14px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .placeholder-card {
-  border-radius: 18px;
-  padding: 18px;
+  border-radius: 14px;
+  padding: 14px;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -695,14 +760,14 @@ button:disabled {
 .log-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
 }
 
 .log-panel {
-  border-radius: 18px;
-  padding: 16px;
+  border-radius: 14px;
+  padding: 14px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -728,10 +793,10 @@ button:disabled {
 .scope-card,
 .scope-empty,
 .empty-list-state {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(6, 14, 24, 0.82);
-  padding: 14px;
+  padding: 12px;
 }
 
 .metric-card span,
@@ -743,7 +808,7 @@ button:disabled {
 }
 
 .metric-card strong {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .watch-toolbar {
@@ -782,7 +847,7 @@ button:disabled {
 .scope-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-height: 0;
 }
 
@@ -793,7 +858,7 @@ button:disabled {
 .scope-header {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   align-items: flex-start;
 }
 
@@ -808,7 +873,7 @@ button:disabled {
 
 .scope-meta strong {
   font-family: var(--mono);
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .scope-stage {
@@ -821,8 +886,8 @@ button:disabled {
 
 .scope-canvas {
   width: 100%;
-  min-height: 240px;
-  border-radius: 18px;
+  min-height: 210px;
+  border-radius: 14px;
   background:
     radial-gradient(circle at top left, rgba(248, 183, 73, 0.08), transparent 22%),
     linear-gradient(180deg, rgba(4, 12, 21, 0.95), rgba(3, 9, 17, 0.98));
@@ -855,7 +920,7 @@ button:disabled {
   border-radius: 999px;
   background: rgba(6, 14, 24, 0.8);
   color: var(--muted-text);
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.05em;
 }
 
@@ -870,13 +935,13 @@ button:disabled {
 .scope-footer {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .scope-empty {
-  min-height: 220px;
+  min-height: 190px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -884,7 +949,7 @@ button:disabled {
 }
 
 .empty-list-state {
-  min-height: 120px;
+  min-height: 96px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -931,11 +996,11 @@ button:disabled {
 .summary-grid {
   margin: 0;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .summary-grid div {
-  padding: 10px 0;
+  padding: 8px 0;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
 }
 
@@ -951,9 +1016,9 @@ button:disabled {
 }
 
 .diagnostic-item {
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 12px;
+  padding: 10px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -1013,7 +1078,7 @@ button:disabled {
 
 @media (max-width: 1440px) {
   .workspace-grid {
-    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 332px) minmax(0, 1fr);
   }
 
   .right-panel {
@@ -1065,13 +1130,13 @@ button:disabled {
 
 @media (max-width: 800px) {
   .workbench-shell {
-    padding: 10px;
+    padding: 8px;
   }
 
   .panel,
   .hero-panel,
   .topbar {
-    padding: 14px;
+    padding: 12px;
   }
 
   .toolbar-buttons {

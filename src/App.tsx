@@ -1025,11 +1025,9 @@ function App() {
       </header>
 
       <section className="hero-panel">
-        <div>
-          <h2>面向 Windows 的 STM32 图形化调试工作台</h2>
-          <p>
-            统一管理 CMake 构建、OpenOCD 连接、GDB 单步、断点、调用栈和变量监视。界面改为主操作直达，次要操作收纳到二级菜单，调试时不用再整页滚轮找按钮。
-          </p>
+        <div className="hero-copy">
+          <h2>调试工作台</h2>
+          <p>把构建、下载、断点和变量监视收进更紧凑的三栏布局，常用操作直接可见，低频操作放进菜单。</p>
         </div>
         <div className="hero-actions">
           <button onClick={() => void openProjectRoot()} disabled={isBusy}>
@@ -1272,7 +1270,7 @@ function App() {
                 onMount={handleEditorMount}
                 options={{
                   glyphMargin: true,
-                  fontSize: 14,
+                  fontSize: 13,
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
                   readOnly: true,
