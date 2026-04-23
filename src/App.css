@@ -313,6 +313,7 @@
 }
 
 .form-panel input,
+.form-panel select,
 .form-panel textarea,
 .watch-composer input,
 .watch-edit-box input,
@@ -322,12 +323,14 @@
 }
 
 input,
+select,
 textarea,
 button {
   font: inherit;
 }
 
 input,
+select,
 textarea {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -337,8 +340,28 @@ textarea {
   font-size: 13px;
 }
 
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.78) 50%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% - 2px),
+    calc(100% - 9px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
 textarea {
   resize: vertical;
+}
+
+.field-hint {
+  display: block;
+  color: var(--muted-text);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 button {

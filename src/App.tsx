@@ -7,7 +7,9 @@ import {
   defaultProjectProfile,
   emptyDebugSessionState,
   type CommandResult,
+  type DebugConfigPreset,
   type DebugControlCommand,
+  type DebuggerPreset,
   type EnvironmentCheckResult,
   type DebugSessionState,
   type EnvironmentInfo,
@@ -457,6 +459,74 @@ interface FlattenedWatchRow {
   isLast: boolean
 }
 
+interface DebuggerPresetOption {
+  value: DebuggerPreset
+  label: string
+  hint: string
+}
+
+interface DebugConfigPresetOption {
+  value: DebugConfigPreset
+  label: string
+  hint: string
+}
+
+type DebugLaunchFlags = Pick<ProjectProfile, 'flashOnConnect' | 'resetAfterConnect' | 'runToMain'>
+
+const debuggerPresetOptions: DebuggerPresetOption[] = [
+  { value: 'custom', label: '自定义 OpenOCD', hint: '手动填写完整 OpenOCD 配置' },
+  { value: 'daplink', label: 'DAPLink', hint: '自动补入 CMSIS-DAP 接口配置' },
+  { value: 'cmsis-dap', label: 'CMSIS-DAP', hint: '适用于通用 CMSIS-DAP 调试器' },
+  { value: 'stlink', label: 'ST-Link', hint: '自动补入 ST-Link 接口配置' },
+  { value: 'jlink', label: 'J-Link', hint: '自动补入 J-Link 接口配置' },
+]
+
+const debugConfigPresetBehaviors: Record<Exclude<DebugConfigPreset, 'custom'>, DebugLaunchFlags> = {
+  'flash-run-main': {
+    flashOnConnect: true,
+    resetAfterConnect: true,
+    runToMain: true,
+  },
+  'flash-reset-halt': {
+    flashOnConnect: true,
+    resetAfterConnect: true,
+    runToMain: false,
+  },
+  'attach-reset-halt': {
+    flashOnConnect: false,
+    resetAfterConnect: true,
+    runToMain: false,
+  },
+  'attach-live': {
+    flashOnConnect: false,
+    resetAfterConnect: false,
+    runToMain: false,
+  },
+}
+
+const debugConfigPresetOptions: DebugConfigPresetOption[] = [
+  { value: 'flash-run-main', label: '下载并运行到 main', hint: '连接时下载、复位并自动跑到 main' },
+  { value: 'flash-reset-halt', label: '下载后停住', hint: '连接时下载并 reset halt，适合先检查初始化' },
+  { value: 'attach-reset-halt', label: '附加并停住', hint: '不下载程序，只 reset halt 并接管目标' },
+  { value: 'attach-live', label: '仅附加当前目标', hint: '不下载、不复位，直接附加当前运行状态' },
+  { value: 'custom', label: '自定义策略', hint: '手动控制下载、复位和运行到 main' },
+]
+
+const debuggerPresetLabels = Object.fromEntries(debuggerPresetOptions.map((option) => [option.value, option.label])) as Record<DebuggerPreset, string>
+const debugConfigPresetLabels = Object.fromEntries(debugConfigPresetOptions.map((option) => [option.value, option.label])) as Record<DebugConfigPreset, string>
+
+function inferDebugConfigPreset(profile: DebugLaunchFlags): DebugConfigPreset {
+  const matched = Object.entries(debugConfigPresetBehaviors).find(([, behavior]) => {
+    return (
+      behavior.flashOnConnect === profile.flashOnConnect &&
+      behavior.resetAfterConnect === profile.resetAfterConnect &&
+      behavior.runToMain === profile.runToMain
+    )
+  })
+
+  return (matched?.[0] as DebugConfigPreset | undefined) ?? 'custom'
+}
+
 function flattenWatchRows(watches: WatchValue[]) {
   const rows: FlattenedWatchRow[] = []
 
@@ -658,6 +728,41 @@ function App() {
 
   function updateProfile<Key extends keyof ProjectProfile>(key: Key, value: ProjectProfile[Key]) {
     setProfile((current) => ({ ...current, [key]: value }))
+  }
+
+  function updateDebuggerPreset(value: DebuggerPreset) {
+    setProfile((current) => ({ ...current, debuggerPreset: value }))
+  }
+
+  function updateDebugConfigPreset(value: DebugConfigPreset) {
+    setProfile((current) => {
+      if (value === 'custom') {
+        return {
+          ...current,
+          debugConfigPreset: value,
+        }
+      }
+
+      return {
+        ...current,
+        debugConfigPreset: value,
+        ...debugConfigPresetBehaviors[value],
+      }
+    })
+  }
+
+  function updateDebugLaunchFlag<Key extends keyof DebugLaunchFlags>(key: Key, value: DebugLaunchFlags[Key]) {
+    setProfile((current) => {
+      const nextProfile = {
+        ...current,
+        [key]: value,
+      }
+
+      return {
+        ...nextProfile,
+        debugConfigPreset: inferDebugConfigPreset(nextProfile),
+      }
+    })
   }
 
   async function openProjectRoot() {
@@ -1122,6 +1227,30 @@ function App() {
                   />
                 </label>
               </div>
+              <div className="field-row">
+                <label>
+                  <span>调试器</span>
+                  <select value={profile.debuggerPreset} onChange={(event) => updateDebuggerPreset(event.target.value as DebuggerPreset)}>
+                    {debuggerPresetOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <small className="field-hint">{debuggerPresetOptions.find((option) => option.value === profile.debuggerPreset)?.hint}</small>
+                </label>
+                <label>
+                  <span>调试配置</span>
+                  <select value={profile.debugConfigPreset} onChange={(event) => updateDebugConfigPreset(event.target.value as DebugConfigPreset)}>
+                    {debugConfigPresetOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <small className="field-hint">{debugConfigPresetOptions.find((option) => option.value === profile.debugConfigPreset)?.hint}</small>
+                </label>
+              </div>
               <label>
                 <span>工具链文件</span>
                 <div className="chooser-row">
@@ -1184,8 +1313,13 @@ function App() {
                     <input value={profile.openOcdPath} onChange={(event) => updateProfile('openOcdPath', event.target.value)} />
                   </label>
                   <label>
-                    <span>OpenOCD 配置</span>
+                    <span>{profile.debuggerPreset === 'custom' ? 'OpenOCD 配置' : '目标 / 额外 OpenOCD 配置'}</span>
                     <textarea rows={3} value={profile.openOcdConfig} onChange={(event) => updateProfile('openOcdConfig', event.target.value)} />
+                    <small className="field-hint">
+                      {profile.debuggerPreset === 'custom'
+                        ? '自定义调试器时，这里填写完整 OpenOCD 配置列表。'
+                        : `已自动选择 ${debuggerPresetLabels[profile.debuggerPreset]} 接口配置，这里只需补 target/board 或其他额外配置。`}
+                    </small>
                   </label>
                   <label>
                     <span>GDB 路径</span>
@@ -1193,15 +1327,15 @@ function App() {
                   </label>
                   <div className="toggle-grid">
                     <label className="toggle-row">
-                      <input type="checkbox" checked={profile.flashOnConnect} onChange={(event) => updateProfile('flashOnConnect', event.target.checked)} />
+                      <input type="checkbox" checked={profile.flashOnConnect} onChange={(event) => updateDebugLaunchFlag('flashOnConnect', event.target.checked)} />
                       <span>连接时下载 ELF</span>
                     </label>
                     <label className="toggle-row">
-                      <input type="checkbox" checked={profile.resetAfterConnect} onChange={(event) => updateProfile('resetAfterConnect', event.target.checked)} />
+                      <input type="checkbox" checked={profile.resetAfterConnect} onChange={(event) => updateDebugLaunchFlag('resetAfterConnect', event.target.checked)} />
                       <span>连接后 reset halt</span>
                     </label>
                     <label className="toggle-row">
-                      <input type="checkbox" checked={profile.runToMain} onChange={(event) => updateProfile('runToMain', event.target.checked)} />
+                      <input type="checkbox" checked={profile.runToMain} onChange={(event) => updateDebugLaunchFlag('runToMain', event.target.checked)} />
                       <span>自动运行到 main</span>
                     </label>
                   </div>
@@ -1527,6 +1661,14 @@ function App() {
                 <div>
                   <dt>GDB</dt>
                   <dd>{profile.gdbPath}</dd>
+                </div>
+                <div>
+                  <dt>调试器</dt>
+                  <dd>{debuggerPresetLabels[profile.debuggerPreset]}</dd>
+                </div>
+                <div>
+                  <dt>调试配置</dt>
+                  <dd>{debugConfigPresetLabels[profile.debugConfigPreset]}</dd>
                 </div>
                 <div>
                   <dt>OpenOCD</dt>
