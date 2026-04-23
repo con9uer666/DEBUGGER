@@ -1,0 +1,66 @@
+{
+  "name": "stm32-debug-studio",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Windows STM32 desktop debugger for CMake, OpenOCD, and GNU Arm toolchains.",
+  "author": "GitHub Copilot",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:desktop\"",
+    "dev:renderer": "vite --host 127.0.0.1 --port 5173",
+    "dev:desktop": "wait-on tcp:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "tsc -b && vite build && npm run build:electron",
+    "build:electron": "tsup electron/main.ts electron/preload.ts --format cjs --out-dir dist-electron --clean --external electron",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "start": "electron .",
+    "dist": "node ./scripts/package-portable.mjs",
+    "dist:installer": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "monaco-editor": "^0.55.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^38.4.0",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.5.0",
+    "tsup": "^8.5.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.58.2",
+    "vite": "^8.0.9",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.stm32.debugstudio",
+    "productName": "STM32 Debug Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
+  }
+}

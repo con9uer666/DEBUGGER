@@ -1,0 +1,44 @@
+:root {
+  --bg: #071018;
+  --bg-secondary: #091522;
+  --panel-bg: rgba(9, 18, 29, 0.9);
+  --border: rgba(255, 255, 255, 0.09);
+  --text-primary: #eef3f6;
+  --muted-text: #9cafbc;
+  --accent: #f8b749;
+  --accent-strong: #d95a2b;
+  --shadow-soft: 0 12px 40px rgba(0, 0, 0, 0.28);
+  --mono: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  --sans: 'Segoe UI Variable Display', 'Aptos', 'Segoe UI', sans-serif;
+
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle at top left, rgba(248, 183, 73, 0.14), transparent 26%),
+    radial-gradient(circle at top right, rgba(64, 173, 255, 0.12), transparent 22%),
+    linear-gradient(180deg, #08111a 0%, #050a10 100%);
+  font-family: var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
