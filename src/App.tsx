@@ -24,7 +24,7 @@ import {
 type ActiveTab = 'editor' | 'memory' | 'registers' | 'logs'
 type LeftPanelView = 'project' | 'files'
 type RightPanelView = 'watch' | 'session'
-type WatchPanelView = 'variables' | 'scope' | 'stats'
+type WatchPanelView = 'table' | 'scope'
 type IconName =
   | 'folder'
   | 'refresh'
@@ -46,12 +46,6 @@ type IconName =
   | 'remove'
   | 'info'
   | 'stack'
-
-const sampleToolchainHints = [
-  '建议 toolchain file 指向 STM32 的 arm-none-eabi CMake 工具链文件',
-  'OpenOCD 配置可填写 board/st_nucleo_f4.cfg 或 interface/stlink.cfg;target/stm32f4x.cfg',
-  'ELF 文件通常位于 build 目录，如 build/app.elf',
-]
 
 const defaultEnvironment: EnvironmentInfo = {
   platform: 'win32',
@@ -278,20 +272,6 @@ function formatNumericValue(value: number | null) {
   return value.toFixed(3).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
 }
 
-function formatSampleAge(timestamp: number | null) {
-  if (!timestamp) {
-    return '无样本'
-  }
-
-  const ageMs = Math.max(0, Date.now() - timestamp)
-
-  if (ageMs < 1000) {
-    return `${Math.round(ageMs)} ms 前`
-  }
-
-  return `${(ageMs / 1000).toFixed(1)} s 前`
-}
-
 function formatSessionStatus(status: string) {
   switch (status) {
     case 'connecting':
@@ -471,6 +451,23 @@ function mapBreakpointsByFile(debugState: DebugSessionState) {
   return result
 }
 
+function flattenWatchRows(watches: WatchValue[]) {
+  const rows: WatchValue[] = []
+
+  function visit(entries: WatchValue[]) {
+    for (const entry of entries) {
+      rows.push(entry)
+
+      if (entry.children && entry.children.length > 0) {
+        visit(entry.children)
+      }
+    }
+  }
+
+  visit(watches)
+  return rows
+}
+
 function App() {
   const [environment, setEnvironment] = useState<EnvironmentInfo>(defaultEnvironment)
   const [profile, setProfile] = useState<ProjectProfile>(defaultProjectProfile)
@@ -480,13 +477,14 @@ function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('editor')
   const [leftPanelView, setLeftPanelView] = useState<LeftPanelView>('project')
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>('watch')
-  const [watchPanelView, setWatchPanelView] = useState<WatchPanelView>('variables')
+  const [watchPanelView, setWatchPanelView] = useState<WatchPanelView>('table')
   const [debugState, setDebugState] = useState<DebugSessionState>(emptyDebugSessionState)
   const [buildLogs, setBuildLogs] = useState<LogEvent[]>([])
   const [debugLogs, setDebugLogs] = useState<LogEvent[]>([])
   const [watchDraft, setWatchDraft] = useState('')
   const [variableValueDraft, setVariableValueDraft] = useState('')
   const [selectedWatch, setSelectedWatch] = useState('')
+  const [editingWatchExpression, setEditingWatchExpression] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [scopeSamples, setScopeSamples] = useState<WatchSample[]>([])
   const [samplingTargetHz, setSamplingTargetHz] = useState(1000)
@@ -502,6 +500,7 @@ function App() {
   const breakpointMap = useMemo(() => mapBreakpointsByFile(debugState), [debugState])
   const buildLogText = useMemo(() => createLogText(buildLogs), [buildLogs])
   const debugLogText = useMemo(() => createLogText(debugLogs), [debugLogs])
+  const visibleWatchRows = useMemo(() => flattenWatchRows(debugState.watches), [debugState.watches])
   const filteredSourceFiles = useMemo(() => {
     const keyword = sourceFilter.trim().toLowerCase()
 
@@ -513,6 +512,23 @@ function App() {
       return entry.name.toLowerCase().includes(keyword) || entry.relativePath.toLowerCase().includes(keyword)
     })
   }, [scan.sourceFiles, sourceFilter])
+
+  useEffect(() => {
+    if (!selectedWatch) {
+      return
+    }
+
+    if (visibleWatchRows.some((entry) => entry.expression === selectedWatch)) {
+      return
+    }
+
+    setSelectedWatch('')
+
+    if (editingWatchExpression === selectedWatch) {
+      setEditingWatchExpression('')
+      setVariableValueDraft('')
+    }
+  }, [editingWatchExpression, selectedWatch, visibleWatchRows])
 
   useEffect(() => {
     window.stm32Debug
@@ -736,7 +752,7 @@ function App() {
       const state = await window.stm32Debug.startDebugSession(profile)
       setDebugState(state)
       setRightPanelView('watch')
-      setWatchPanelView('scope')
+      setWatchPanelView('table')
       setStatusText(`已连接调试器 | ${formatFrame(state.currentFrame)}`)
     })
   }
@@ -809,7 +825,8 @@ function App() {
     const state = await window.stm32Debug.setWatchExpressions(nextExpressions)
     setDebugState(state)
     setRightPanelView('watch')
-    setWatchPanelView('variables')
+    setWatchPanelView('table')
+    setSelectedWatch(expression)
     setWatchDraft('')
   }
 
@@ -835,7 +852,7 @@ function App() {
       })
       setDebugState(state)
       setRightPanelView('watch')
-      setWatchPanelView(enabled ? 'scope' : 'stats')
+      setWatchPanelView(enabled ? 'scope' : 'table')
       setStatusText(
         enabled
           ? `示波器已连接到 ${expression}，目标频率 ${formatFrequency(state.watchSampling.targetHz)}`
@@ -861,18 +878,50 @@ function App() {
     }
   }
 
-  async function applyVariableValue() {
-    if (!selectedWatch || !variableValueDraft.trim()) {
+  async function toggleWatchExpansion(entry: WatchValue) {
+    if (!entry.variableObjectName || !entry.expandable) {
       return
     }
 
-    await withBusyState(`修改变量 ${selectedWatch}`, async () => {
-      const state = await window.stm32Debug.setVariable(selectedWatch, variableValueDraft.trim())
-      setDebugState(state)
-      setRightPanelView('watch')
-      setWatchPanelView('variables')
-      setStatusText(`已写入变量 ${selectedWatch}`)
+    const state = await window.stm32Debug.setWatchExpansion({
+      variableObjectName: entry.variableObjectName,
+      expanded: !entry.expanded,
     })
+    setDebugState(state)
+    setRightPanelView('watch')
+    setWatchPanelView('table')
+  }
+
+  function beginWatchEdit(entry: WatchValue) {
+    if (!entry.editable || entry.error) {
+      return
+    }
+
+    setSelectedWatch(entry.expression)
+    setEditingWatchExpression(entry.expression)
+    setVariableValueDraft(entry.value)
+    setRightPanelView('watch')
+    setWatchPanelView('table')
+  }
+
+  function cancelWatchEdit() {
+    setEditingWatchExpression('')
+    setVariableValueDraft('')
+  }
+
+  async function commitWatchEdit(expression: string) {
+    if (!expression || !variableValueDraft.trim()) {
+      cancelWatchEdit()
+      return
+    }
+
+    setSelectedWatch(expression)
+    await withBusyState(`修改变量 ${expression}`, async () => {
+      const state = await window.stm32Debug.setVariable(expression, variableValueDraft.trim())
+      setDebugState(state)
+      setStatusText(`已写入变量 ${expression}`)
+    })
+    cancelWatchEdit()
   }
 
   function renderWatchRow(entry: WatchValue) {
@@ -886,23 +935,68 @@ function App() {
           : '示波已挂起'
         : '点击后可编辑或挂到示波器'
 
+    const isEditing = editingWatchExpression === entry.expression
+
     return (
-      <button
+      <tr
         key={entry.expression}
-        className={isSelected ? 'watch-row selected' : 'watch-row'}
+        className={isSelected ? 'watch-table-row selected' : 'watch-table-row'}
         onClick={() => {
           setSelectedWatch(entry.expression)
-          setVariableValueDraft(entry.value)
-          setWatchPanelView('variables')
+          setWatchPanelView('table')
         }}
       >
-        <div className="watch-row-topline">
-          <span>{entry.expression}</span>
-          {isScoped ? <small className="scope-chip">示波</small> : null}
-        </div>
-        <strong>{entry.error ? `ERR: ${entry.error}` : entry.value || '-'}</strong>
-        <small>{hintText}</small>
-      </button>
+        <td>
+          <div className="watch-name-cell" style={{ paddingLeft: `${entry.level * 16}px` }}>
+            {entry.expandable ? (
+              <button
+                type="button"
+                className={entry.expanded ? 'watch-expander expanded' : 'watch-expander'}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void toggleWatchExpansion(entry)
+                }}
+              >
+                {entry.expanded ? '▾' : '▸'}
+              </button>
+            ) : (
+              <span className="watch-expander spacer" />
+            )}
+            <div className="watch-name-meta">
+              <strong>{entry.displayName}</strong>
+              <small>{entry.type ?? hintText}</small>
+            </div>
+            {isScoped ? <small className="scope-chip">示波</small> : null}
+          </div>
+        </td>
+        <td
+          className={entry.editable && !entry.error ? 'watch-value-cell editable' : 'watch-value-cell'}
+          onDoubleClick={() => beginWatchEdit(entry)}
+        >
+          {isEditing ? (
+            <input
+              autoFocus
+              value={variableValueDraft}
+              onChange={(event) => setVariableValueDraft(event.target.value)}
+              onBlur={() => void commitWatchEdit(entry.expression)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void commitWatchEdit(entry.expression)
+                }
+
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  cancelWatchEdit()
+                }
+              }}
+            />
+          ) : (
+            <span>{entry.error ? `ERR: ${entry.error}` : entry.value || '-'}</span>
+          )}
+        </td>
+      </tr>
     )
   }
 
@@ -1093,18 +1187,6 @@ function App() {
                 </div>
               </details>
 
-              <details className="collapse-card subtle">
-                <summary>
-                  <ButtonLabel icon="info" text="填写建议" />
-                </summary>
-                <div className="collapse-card-body">
-                  <ul className="hint-list">
-                    {sampleToolchainHints.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              </details>
             </section>
           ) : (
             <section className="panel-section file-browser">
@@ -1252,7 +1334,7 @@ function App() {
               <div className="panel-header">
                 <div>
                   <h3>监视与示波</h3>
-                  <span>变量操作、示波器和统计信息按页签拆开，避免内容互相遮挡</span>
+                  <span>监视变量、结构体/class 展开和示波器都从这里进入</span>
                 </div>
                 <div className="watch-badge-group">
                   <span className={debugState.watchSampling.active ? 'watch-badge live' : 'watch-badge'}>{scopeModeLabel}</span>
@@ -1265,60 +1347,59 @@ function App() {
                 <span className="watch-summary-pill">目标频率：{formatFrequency(debugState.watchSampling.targetHz)}</span>
               </div>
               <div className="mini-tab-strip">
-                <button className={watchPanelView === 'variables' ? 'active' : ''} onClick={() => setWatchPanelView('variables')}>
-                  变量
+                <button className={watchPanelView === 'table' ? 'active' : ''} onClick={() => setWatchPanelView('table')}>
+                  监视表
                 </button>
                 <button className={watchPanelView === 'scope' ? 'active' : ''} onClick={() => setWatchPanelView('scope')}>
                   示波器
                 </button>
-                <button className={watchPanelView === 'stats' ? 'active' : ''} onClick={() => setWatchPanelView('stats')}>
-                  统计
-                </button>
               </div>
 
-              {watchPanelView === 'variables' ? (
+              {watchPanelView === 'table' ? (
                 <div className="watch-tab-content">
-                  <div className="watch-composer watch-card">
+                  <div className="watch-composer watch-card watch-toolbar-inline">
                     <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="输入变量或表达式" />
                     <button onClick={() => void addWatchExpression()}>
                       <ButtonLabel icon="plus" text="添加" />
                     </button>
-                    <button onClick={() => void refreshWatchValues()}>
-                      <ButtonLabel icon="refresh" text="刷新" />
-                    </button>
+                    <details className="action-menu">
+                      <summary>
+                        <ButtonLabel icon="more" text="更多监视" />
+                      </summary>
+                      <div className="action-menu-list action-menu-list-inline">
+                        <button onClick={() => void refreshWatchValues()}>
+                          <ButtonLabel icon="refresh" text="刷新监视值" />
+                        </button>
+                        <button onClick={() => setWatchPanelView('scope')} disabled={!selectedWatch}>
+                          <ButtonLabel icon="wave" text="打开示波器" />
+                        </button>
+                      </div>
+                    </details>
                   </div>
-                  <div className="watch-list-panel watch-card">
+                  <div className="watch-table-card watch-card">
                     <div className="subsection-header">
-                      <strong>监视列表</strong>
-                      <span>{debugState.watches.length} 项</span>
+                      <strong>监视表</strong>
+                      <span>双击右侧值单元格可直接修改，结构体和 class 可展开</span>
                     </div>
-                    <div className="watch-list">
-                      {debugState.watches.length > 0 ? (
-                        debugState.watches.map((entry) => renderWatchRow(entry))
-                      ) : (
-                        <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="watch-edit-box watch-card">
-                    <div className="subsection-header">
-                      <strong>变量写入</strong>
-                      <span>{selectedWatch || '未选择变量'}</span>
-                    </div>
-                    <label>
-                      <span>已选变量</span>
-                      <input value={selectedWatch} readOnly />
-                    </label>
-                    <label>
-                      <span>新值</span>
-                      <input value={variableValueDraft} onChange={(event) => setVariableValueDraft(event.target.value)} />
-                    </label>
-                    <div className="action-grid single-row">
-                      <button onClick={() => void applyVariableValue()} disabled={!selectedWatch || isBusy}>
-                        <ButtonLabel icon="write" text="写入变量" />
-                      </button>
+                    {visibleWatchRows.length > 0 ? (
+                      <div className="watch-table-wrap">
+                        <table className="watch-table">
+                          <thead>
+                            <tr>
+                              <th>变量名</th>
+                              <th>值</th>
+                            </tr>
+                          </thead>
+                          <tbody>{visibleWatchRows.map((entry) => renderWatchRow(entry))}</tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
+                    )}
+                    <div className="watch-table-footer">
+                      <span>已选变量：{selectedWatch || '未选择'}</span>
                       <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
-                        <ButtonLabel icon="remove" text="移除变量" />
+                        <ButtonLabel icon="remove" text="移除当前变量" />
                       </button>
                     </div>
                   </div>
@@ -1363,39 +1444,6 @@ function App() {
                       lastNumericValue={debugState.watchSampling.lastNumericValue}
                       lastError={debugState.watchSampling.lastError}
                     />
-                  </div>
-                </div>
-              ) : null}
-
-              {watchPanelView === 'stats' ? (
-                <div className="watch-tab-content">
-                  <div className="watch-metrics-grid compact-metrics">
-                    <article className="metric-card">
-                      <span>示波通道</span>
-                      <strong>{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</strong>
-                      <small>先选中变量，再开启示波</small>
-                    </article>
-                    <article className="metric-card">
-                      <span>当前频率</span>
-                      <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
-                      <small>按最近 1 秒样本数实时统计</small>
-                    </article>
-                    <article className="metric-card">
-                      <span>最近样本</span>
-                      <strong>{formatSampleAge(debugState.watchSampling.lastSampleAt)}</strong>
-                      <small>最新值 {debugState.watchSampling.lastValue || '-'}</small>
-                    </article>
-                    <article className="metric-card">
-                      <span>最近数值</span>
-                      <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
-                      <small>{debugState.watchSampling.lastError ?? '链路稳定时会持续更新'}</small>
-                    </article>
-                  </div>
-                  <div className="watch-card stats-note">
-                    <div className="subsection-header">
-                      <strong>使用建议</strong>
-                    </div>
-                    <p>如果右侧内容较多，先切到“变量”或“示波器”页，只看当前任务需要的控件。这样比把监视、写值、曲线和统计全部堆在一页里更清楚。</p>
                   </div>
                 </div>
               ) : null}

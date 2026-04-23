@@ -87,9 +87,17 @@ export interface DebugBreakpoint {
 
 export interface WatchValue {
   expression: string
+  displayName: string
   value: string
   type?: string
   error?: string
+  level: number
+  expandable: boolean
+  expanded: boolean
+  editable: boolean
+  childCount: number
+  variableObjectName?: string
+  children?: WatchValue[]
 }
 
 export interface WatchSample {
@@ -108,6 +116,11 @@ export interface WatchSamplingRequest {
   expression: string | null
   enabled: boolean
   targetHz: number
+}
+
+export interface WatchExpansionRequest {
+  variableObjectName: string
+  expanded: boolean
 }
 
 export interface WatchSamplingStatus {
@@ -192,6 +205,7 @@ export interface Stm32DebugApi {
   sendDebugControl(command: DebugControlCommand): Promise<DebugSessionState>
   setBreakpoints(filePath: string, lines: number[]): Promise<DebugSessionState>
   setWatchExpressions(expressions: string[]): Promise<DebugSessionState>
+  setWatchExpansion(request: WatchExpansionRequest): Promise<DebugSessionState>
   configureWatchSampling(request: WatchSamplingRequest): Promise<DebugSessionState>
   refreshWatches(): Promise<DebugSessionState>
   setVariable(expression: string, value: string): Promise<DebugSessionState>

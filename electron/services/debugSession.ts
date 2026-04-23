@@ -11,6 +11,7 @@ import {
   type LogEvent,
   type StackFrame,
   type StartDebugRequest,
+  type WatchExpansionRequest,
   type WatchSample,
   type WatchSamplingRequest,
   type WatchValue,
@@ -51,6 +52,16 @@ function asNumber(value: MiValue | undefined) {
 
   const parsed = Number(text)
   return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function normalizeWatchChild(value: MiValue | undefined) {
+  const payload = asObject(value)
+
+  if (!payload) {
+    return null
+  }
+
+  return asObject(payload.child) ?? payload
 }
 
 function cloneState(state: DebugSessionState) {
@@ -119,6 +130,24 @@ function parseWatchNumericValue(value: string) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function joinWatchExpression(parentExpression: string, childExpression: string) {
+  const trimmed = childExpression.trim()
+
+  if (!trimmed) {
+    return parentExpression
+  }
+
+  if (trimmed.startsWith('[') || trimmed.startsWith('.') || trimmed.startsWith('->')) {
+    return `${parentExpression}${trimmed}`
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    return `${parentExpression}[${trimmed}]`
+  }
+
+  return `${parentExpression}.${trimmed}`
+}
+
 export class DebugSession {
   private readonly emit: SessionEmitter
   private readonly state: DebugSessionState = cloneState(emptyDebugSessionState)
@@ -130,6 +159,10 @@ export class DebugSession {
   private gdbBuffer = ''
   private sequence = 1
   private watchExpressions: string[] = []
+  private readonly watchRootVariableObjects = new Map<string, string>()
+  private readonly watchVariableObjectByExpression = new Map<string, string>()
+  private readonly expandedWatchVariableObjects = new Set<string>()
+  private nextWatchObjectId = 1
   private watchSamplerTimer: NodeJS.Timeout | null = null
   private watchStateEmitTimer: NodeJS.Timeout | null = null
   private watchSamplerBusy = false
@@ -225,23 +258,236 @@ export class DebugSession {
     this.state.watchSampling.lastNumericValue = null
   }
 
-  private updateWatchValue(expression: string, value: string, error?: string) {
-    const nextValue: WatchValue = {
-      expression,
-      value,
-      error,
-    }
-    const index = this.state.watches.findIndex((entry) => entry.expression === expression)
+  private clearWatchVariableObjectMappings() {
+    this.watchVariableObjectByExpression.clear()
+  }
 
-    if (index >= 0) {
-      this.state.watches[index] = {
-        ...this.state.watches[index],
-        ...nextValue,
+  private clearExpandedWatchBranch(variableObjectName: string) {
+    for (const entry of [...this.expandedWatchVariableObjects]) {
+      if (entry === variableObjectName || entry.startsWith(`${variableObjectName}.`)) {
+        this.expandedWatchVariableObjects.delete(entry)
       }
+    }
+  }
+
+  private removeWatchRootState(expression: string) {
+    const variableObjectName = this.watchRootVariableObjects.get(expression)
+
+    if (!variableObjectName) {
       return
     }
 
-    this.state.watches.push(nextValue)
+    this.watchRootVariableObjects.delete(expression)
+    this.clearExpandedWatchBranch(variableObjectName)
+  }
+
+  private resetWatchObjects() {
+    this.watchRootVariableObjects.clear()
+    this.watchVariableObjectByExpression.clear()
+    this.expandedWatchVariableObjects.clear()
+    this.nextWatchObjectId = 1
+  }
+
+  private createDisconnectedWatch(expression: string): WatchValue {
+    return {
+      expression,
+      displayName: expression,
+      value: '',
+      error: 'Disconnected',
+      level: 0,
+      expandable: false,
+      expanded: false,
+      editable: true,
+      childCount: 0,
+    }
+  }
+
+  private createWatchError(expression: string, error: string, variableObjectName?: string): WatchValue {
+    return {
+      expression,
+      displayName: expression,
+      value: '',
+      error,
+      level: 0,
+      expandable: false,
+      expanded: false,
+      editable: false,
+      childCount: 0,
+      variableObjectName,
+    }
+  }
+
+  private async ensureWatchRootVariableObject(expression: string) {
+    const existing = this.watchRootVariableObjects.get(expression)
+
+    if (existing || !this.gdbProcess) {
+      return existing ?? null
+    }
+
+    const variableObjectName = `watch${this.nextWatchObjectId}`
+    this.nextWatchObjectId += 1
+
+    const payload = await this.sendCommand(`-var-create ${variableObjectName} * ${quoteMiString(expression)}`)
+    const resolvedName = asString(payload.name) ?? variableObjectName
+    this.watchRootVariableObjects.set(expression, resolvedName)
+    return resolvedName
+  }
+
+  private async syncWatchVariableObjects() {
+    const desiredExpressions = new Set(this.watchExpressions)
+
+    for (const [expression, variableObjectName] of [...this.watchRootVariableObjects.entries()]) {
+      if (desiredExpressions.has(expression)) {
+        continue
+      }
+
+      if (this.gdbProcess) {
+        try {
+          await this.sendCommand(`-var-delete ${variableObjectName}`)
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to delete watch ${expression}: ${(error as Error).message}\n`)
+        }
+      }
+
+      this.removeWatchRootState(expression)
+    }
+
+    for (const expression of this.watchExpressions) {
+      try {
+        await this.ensureWatchRootVariableObject(expression)
+      } catch (error) {
+        this.emitLog('gdb', 'stderr', `Failed to create watch ${expression}: ${(error as Error).message}\n`)
+      }
+    }
+  }
+
+  private async describeWatchVariableObject(
+    variableObjectName: string,
+    expression: string,
+    displayName: string,
+    level: number,
+  ) {
+    let childCount = 0
+    let type: string | undefined
+    let value = ''
+    let error: string | undefined
+
+    try {
+      const payload = await this.sendCommand(`-var-info-num-children ${variableObjectName}`)
+      childCount = asNumber(payload.numchild) ?? 0
+    } catch (nextError) {
+      error = (nextError as Error).message
+    }
+
+    try {
+      const payload = await this.sendCommand(`-var-info-type ${variableObjectName}`)
+      type = asString(payload.type)
+    } catch {
+      // Ignore type lookup failures and keep the watch usable.
+    }
+
+    try {
+      const payload = await this.sendCommand(`-var-evaluate-expression ${variableObjectName}`)
+      value = asString(payload.value) ?? ''
+    } catch (nextError) {
+      error = (nextError as Error).message
+    }
+
+    const watch: WatchValue = {
+      expression,
+      displayName,
+      value,
+      type,
+      error,
+      level,
+      expandable: childCount > 0,
+      expanded: this.expandedWatchVariableObjects.has(variableObjectName),
+      editable: childCount === 0 && !error,
+      childCount,
+      variableObjectName,
+    }
+
+    this.watchVariableObjectByExpression.set(expression, variableObjectName)
+
+    if (watch.expandable && watch.expanded) {
+      watch.children = await this.listWatchChildren(variableObjectName, expression, level + 1)
+    }
+
+    return watch
+  }
+
+  private async listWatchChildren(parentVariableObjectName: string, parentExpression: string, level: number) {
+    const payload = await this.sendCommand(`-var-list-children --all-values ${parentVariableObjectName}`)
+    const children: WatchValue[] = []
+
+    for (const entry of asArray(payload.children)) {
+      const child = normalizeWatchChild(entry)
+
+      if (!child) {
+        continue
+      }
+
+      const variableObjectName = asString(child.name)
+
+      if (!variableObjectName) {
+        continue
+      }
+
+      const displayName = asString(child.exp) ?? variableObjectName.split('.').pop() ?? variableObjectName
+      const expression = joinWatchExpression(parentExpression, displayName)
+      const childCount = asNumber(child.numchild) ?? 0
+
+      const watch: WatchValue = {
+        expression,
+        displayName,
+        value: asString(child.value) ?? '',
+        type: asString(child.type),
+        error: asString(child.error),
+        level,
+        expandable: childCount > 0,
+        expanded: this.expandedWatchVariableObjects.has(variableObjectName),
+        editable: childCount === 0,
+        childCount,
+        variableObjectName,
+      }
+
+      this.watchVariableObjectByExpression.set(expression, variableObjectName)
+
+      if (watch.expandable && watch.expanded) {
+        watch.children = await this.listWatchChildren(variableObjectName, expression, level + 1)
+      }
+
+      children.push(watch)
+    }
+
+    return children
+  }
+
+  private findWatchByExpression(expression: string, watches = this.state.watches): WatchValue | null {
+    for (const watch of watches) {
+      if (watch.expression === expression) {
+        return watch
+      }
+
+      const child = watch.children ? this.findWatchByExpression(expression, watch.children) : null
+
+      if (child) {
+        return child
+      }
+    }
+
+    return null
+  }
+
+  private updateWatchValue(expression: string, value: string, error?: string) {
+    const target = this.findWatchByExpression(expression)
+
+    if (!target) {
+      return
+    }
+
+    target.value = value
+    target.error = error
   }
 
   private scheduleWatchSample(delayMs = 0) {
@@ -380,11 +626,8 @@ export class DebugSession {
     this.state.currentFrame = null
     this.state.stack = []
     this.state.lastStopReason = null
-    this.state.watches = this.watchExpressions.map((expression) => ({
-      expression,
-      value: '',
-      error: 'Disconnected',
-    }))
+    this.resetWatchObjects()
+    this.state.watches = this.watchExpressions.map((expression) => this.createDisconnectedWatch(expression))
     this.resetWatchSamplingRuntime(this.state.watchSampling.enabled ? '调试器未连接' : null)
   }
 
@@ -700,11 +943,8 @@ export class DebugSession {
 
   async refreshWatches(emitState = true) {
     if (!this.gdbProcess) {
-      this.state.watches = this.watchExpressions.map((expression) => ({
-        expression,
-        value: '',
-        error: 'Disconnected',
-      }))
+      this.resetWatchObjects()
+      this.state.watches = this.watchExpressions.map((expression) => this.createDisconnectedWatch(expression))
       this.syncWatchSamplingState()
 
       if (emitState) {
@@ -714,33 +954,39 @@ export class DebugSession {
       return this.getState()
     }
 
+    await this.syncWatchVariableObjects()
+    this.clearWatchVariableObjectMappings()
+
     const watches: WatchValue[] = []
 
     for (const expression of this.watchExpressions) {
+      const variableObjectName = this.watchRootVariableObjects.get(expression)
+
+      if (!variableObjectName) {
+        watches.push(this.createWatchError(expression, '监视表达式创建失败'))
+        continue
+      }
+
       try {
-        const payload = await this.sendCommand(`-data-evaluate-expression ${quoteMiString(expression)}`)
-        watches.push({
-          expression,
-          value: asString(payload.value) ?? '',
-        })
+        watches.push(await this.describeWatchVariableObject(variableObjectName, expression, expression, 0))
       } catch (error) {
-        watches.push({
-          expression,
-          value: '',
-          error: (error as Error).message,
-        })
+        watches.push(this.createWatchError(expression, (error as Error).message, variableObjectName))
       }
     }
 
     this.state.watches = watches
 
     if (this.state.watchSampling.expression) {
-      const sampledWatch = watches.find((entry) => entry.expression === this.state.watchSampling.expression)
+      const sampledWatch = this.findWatchByExpression(this.state.watchSampling.expression, watches)
 
       if (sampledWatch) {
         this.state.watchSampling.lastValue = sampledWatch.value
         this.state.watchSampling.lastNumericValue = parseWatchNumericValue(sampledWatch.value)
         this.state.watchSampling.lastError = sampledWatch.error ?? this.state.watchSampling.lastError
+      } else if (this.state.watchSampling.enabled) {
+        this.state.watchSampling.enabled = false
+        this.state.watchSampling.expression = null
+        this.resetWatchSamplingRuntime('采样变量已不可用')
       }
     }
 
@@ -1020,10 +1266,32 @@ export class DebugSession {
   async setWatchExpressions(expressions: string[]) {
     this.watchExpressions = [...new Set(expressions.map((expression) => expression.trim()).filter(Boolean))]
 
-    if (this.state.watchSampling.expression && !this.watchExpressions.includes(this.state.watchSampling.expression)) {
+    if (
+      this.state.watchSampling.expression &&
+      !this.watchExpressions.some(
+        (expression) =>
+          this.state.watchSampling.expression === expression ||
+          this.state.watchSampling.expression?.startsWith(`${expression}.`) ||
+          this.state.watchSampling.expression?.startsWith(`${expression}[`),
+      )
+    ) {
       this.state.watchSampling.enabled = false
       this.state.watchSampling.expression = null
       this.resetWatchSamplingRuntime('采样变量已被移除')
+    }
+
+    return await this.refreshWatches()
+  }
+
+  async setWatchExpansion(request: WatchExpansionRequest) {
+    if (!request.variableObjectName.trim()) {
+      return this.getState()
+    }
+
+    if (request.expanded) {
+      this.expandedWatchVariableObjects.add(request.variableObjectName)
+    } else {
+      this.clearExpandedWatchBranch(request.variableObjectName)
     }
 
     return await this.refreshWatches()
@@ -1043,7 +1311,14 @@ export class DebugSession {
   }
 
   async setVariable(expression: string, value: string) {
-    await this.sendConsoleCommand(`set var ${expression} = ${value}`)
+    const variableObjectName = this.watchVariableObjectByExpression.get(expression)
+
+    if (variableObjectName) {
+      await this.sendCommand(`-var-assign ${variableObjectName} ${quoteMiString(value)}`)
+    } else {
+      await this.sendConsoleCommand(`set var ${expression} = ${value}`)
+    }
+
     return await this.refreshWatches()
   }
 }
