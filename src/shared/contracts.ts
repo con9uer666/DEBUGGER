@@ -11,7 +11,24 @@ export interface FileDialogRequest {
 
 export type DebuggerPreset = 'custom' | 'daplink' | 'cmsis-dap' | 'stlink' | 'jlink'
 
+export type DebugTargetPreset =
+  | 'custom'
+  | 'target-stm32f0x'
+  | 'target-stm32f1x'
+  | 'target-stm32f3x'
+  | 'target-stm32f4x'
+  | 'target-stm32f7x'
+  | 'target-stm32g0x'
+  | 'target-stm32g4x'
+  | 'target-stm32h7x'
+  | 'target-stm32l0'
+  | 'target-stm32l4x'
+  | 'board-st-nucleo-f4'
+  | 'board-stm32f4discovery'
+
 export type DebugConfigPreset = 'flash-run-main' | 'flash-reset-halt' | 'attach-reset-halt' | 'attach-live' | 'custom'
+
+export type DetachedPanelKind = 'watch-table' | 'watch-scope'
 
 export interface ProjectProfile {
   projectRoot: string
@@ -24,6 +41,7 @@ export interface ProjectProfile {
   buildTarget: string
   jobs: number
   debuggerPreset: DebuggerPreset
+  debugTargetPreset: DebugTargetPreset
   debugConfigPreset: DebugConfigPreset
   openOcdPath: string
   openOcdConfig: string
@@ -200,11 +218,13 @@ export interface Stm32DebugApi {
   chooseFile(request?: FileDialogRequest): Promise<string | null>
   getEnvironmentInfo(): Promise<EnvironmentInfo>
   checkHostEnvironment(): Promise<EnvironmentCheckResult>
+  getDebugState(): Promise<DebugSessionState>
   scanProject(projectRoot: string, buildDir?: string): Promise<ProjectScanResult>
   readSourceFile(filePath: string): Promise<OpenFileResult>
   configureProject(request: ConfigureProjectRequest): Promise<CommandResult>
   buildProject(request: BuildProjectRequest): Promise<CommandResult>
   generateVsCodeFiles(profile: ProjectProfile): Promise<VsCodeGenerationResult>
+  openDetachedPanel(kind: DetachedPanelKind): Promise<void>
   programDevice(request: StartDebugRequest): Promise<CommandResult>
   startDebugSession(request: StartDebugRequest): Promise<DebugSessionState>
   stopDebugSession(): Promise<DebugSessionState>
@@ -232,6 +252,7 @@ export const defaultProjectProfile: ProjectProfile = {
   buildTarget: '',
   jobs: 8,
   debuggerPreset: 'custom',
+  debugTargetPreset: 'custom',
   debugConfigPreset: 'flash-run-main',
   openOcdPath: 'openocd',
   openOcdConfig: '',

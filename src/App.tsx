@@ -1,14 +1,16 @@
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import type * as Monaco from 'monaco-editor'
 
 import './App.css'
 import {
+  type DetachedPanelKind,
   defaultProjectProfile,
   emptyDebugSessionState,
   type CommandResult,
   type DebugConfigPreset,
   type DebugControlCommand,
+  type DebugTargetPreset,
   type DebuggerPreset,
   type EnvironmentCheckResult,
   type DebugSessionState,
@@ -48,6 +50,7 @@ type IconName =
   | 'remove'
   | 'info'
   | 'stack'
+  | 'popout'
 
 const defaultEnvironment: EnvironmentInfo = {
   platform: 'win32',
@@ -229,6 +232,14 @@ function Icon({ name }: { name: IconName }) {
           <path d="M12 4l8 4-8 4-8-4z" />
           <path d="M4 12l8 4 8-4" />
           <path d="M4 16l8 4 8-4" />
+        </svg>
+      )
+    case 'popout':
+      return (
+        <svg {...commonProps}>
+          <path d="M14 5h5v5" />
+          <path d="M19 5l-7 7" />
+          <path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19h11a1.5 1.5 0 0 0 1.5-1.5V14" />
         </svg>
       )
     default:
@@ -465,6 +476,12 @@ interface DebuggerPresetOption {
   hint: string
 }
 
+interface DebugTargetPresetOption {
+  value: DebugTargetPreset
+  label: string
+  hint: string
+}
+
 interface DebugConfigPresetOption {
   value: DebugConfigPreset
   label: string
@@ -473,12 +490,30 @@ interface DebugConfigPresetOption {
 
 type DebugLaunchFlags = Pick<ProjectProfile, 'flashOnConnect' | 'resetAfterConnect' | 'runToMain'>
 
+type ResizableSidebar = 'left' | 'right'
+
 const debuggerPresetOptions: DebuggerPresetOption[] = [
-  { value: 'custom', label: '自定义 OpenOCD', hint: '手动填写完整 OpenOCD 配置' },
+  { value: 'custom', label: '自定义接口', hint: '手动填写完整 OpenOCD 接口配置' },
   { value: 'daplink', label: 'DAPLink', hint: '自动补入 CMSIS-DAP 接口配置' },
   { value: 'cmsis-dap', label: 'CMSIS-DAP', hint: '适用于通用 CMSIS-DAP 调试器' },
   { value: 'stlink', label: 'ST-Link', hint: '自动补入 ST-Link 接口配置' },
   { value: 'jlink', label: 'J-Link', hint: '自动补入 J-Link 接口配置' },
+]
+
+const debugTargetPresetOptions: DebugTargetPresetOption[] = [
+  { value: 'custom', label: '自定义目标', hint: '手动填写 target/board 配置' },
+  { value: 'target-stm32f0x', label: 'STM32F0 系列', hint: '使用 target/stm32f0x.cfg' },
+  { value: 'target-stm32f1x', label: 'STM32F1 系列', hint: '使用 target/stm32f1x.cfg' },
+  { value: 'target-stm32f3x', label: 'STM32F3 系列', hint: '使用 target/stm32f3x.cfg' },
+  { value: 'target-stm32f4x', label: 'STM32F4 系列', hint: '使用 target/stm32f4x.cfg' },
+  { value: 'target-stm32f7x', label: 'STM32F7 系列', hint: '使用 target/stm32f7x.cfg' },
+  { value: 'target-stm32g0x', label: 'STM32G0 系列', hint: '使用 target/stm32g0x.cfg' },
+  { value: 'target-stm32g4x', label: 'STM32G4 系列', hint: '使用 target/stm32g4x.cfg' },
+  { value: 'target-stm32h7x', label: 'STM32H7 系列', hint: '使用 target/stm32h7x.cfg' },
+  { value: 'target-stm32l0', label: 'STM32L0 系列', hint: '使用 target/stm32l0.cfg' },
+  { value: 'target-stm32l4x', label: 'STM32L4 系列', hint: '使用 target/stm32l4x.cfg' },
+  { value: 'board-st-nucleo-f4', label: 'Nucleo-F4 开发板', hint: '使用 board/st_nucleo_f4.cfg' },
+  { value: 'board-stm32f4discovery', label: 'STM32F4 Discovery', hint: '使用 board/stm32f4discovery.cfg' },
 ]
 
 const debugConfigPresetBehaviors: Record<Exclude<DebugConfigPreset, 'custom'>, DebugLaunchFlags> = {
@@ -513,7 +548,27 @@ const debugConfigPresetOptions: DebugConfigPresetOption[] = [
 ]
 
 const debuggerPresetLabels = Object.fromEntries(debuggerPresetOptions.map((option) => [option.value, option.label])) as Record<DebuggerPreset, string>
+const debugTargetPresetLabels = Object.fromEntries(debugTargetPresetOptions.map((option) => [option.value, option.label])) as Record<DebugTargetPreset, string>
 const debugConfigPresetLabels = Object.fromEntries(debugConfigPresetOptions.map((option) => [option.value, option.label])) as Record<DebugConfigPreset, string>
+
+function getDetachedPanelMode() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const panel = new URLSearchParams(window.location.search).get('panel')
+  return panel === 'watch-table' || panel === 'watch-scope' ? panel : null
+}
+
+function clampSidebarWidth(side: ResizableSidebar, width: number) {
+  const normalized = Math.round(width)
+
+  if (side === 'left') {
+    return Math.min(460, Math.max(250, normalized))
+  }
+
+  return Math.min(560, Math.max(290, normalized))
+}
 
 function inferDebugConfigPreset(profile: DebugLaunchFlags): DebugConfigPreset {
   const matched = Object.entries(debugConfigPresetBehaviors).find(([, behavior]) => {
@@ -551,6 +606,7 @@ function flattenWatchRows(watches: WatchValue[]) {
 }
 
 function App() {
+  const detachedPanelMode = useMemo(() => getDetachedPanelMode(), [])
   const [environment, setEnvironment] = useState<EnvironmentInfo>(defaultEnvironment)
   const [profile, setProfile] = useState<ProjectProfile>(defaultProjectProfile)
   const [environmentCheck, setEnvironmentCheck] = useState<EnvironmentCheckResult>(emptyEnvironmentCheck)
@@ -573,16 +629,28 @@ function App() {
   const [statusText, setStatusText] = useState('就绪')
   const [isBusy, setIsBusy] = useState(false)
   const [editorReady, setEditorReady] = useState(false)
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(308)
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(332)
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationIdsRef = useRef<string[]>([])
   const samplingExpressionRef = useRef<string | null>(null)
+  const resizeStateRef = useRef<{ side: ResizableSidebar; startX: number; startWidth: number } | null>(null)
 
   const breakpointMap = useMemo(() => mapBreakpointsByFile(debugState), [debugState])
   const buildLogText = useMemo(() => createLogText(buildLogs), [buildLogs])
   const debugLogText = useMemo(() => createLogText(debugLogs), [debugLogs])
   const visibleWatchRows = useMemo(() => flattenWatchRows(debugState.watches), [debugState.watches])
+  const selectableWatchExpressions = useMemo(() => {
+    const mapped = visibleWatchRows.map(({ entry }) => ({
+      expression: entry.expression,
+      label: entry.expression,
+      type: entry.type,
+    }))
+
+    return mapped.filter((entry, index, list) => list.findIndex((candidate) => candidate.expression === entry.expression) === index)
+  }, [visibleWatchRows])
   const filteredSourceFiles = useMemo(() => {
     const keyword = sourceFilter.trim().toLowerCase()
 
@@ -613,6 +681,59 @@ function App() {
   }, [editingWatchExpression, selectedWatch, visibleWatchRows])
 
   useEffect(() => {
+    if (selectedWatch || !debugState.watchSampling.expression) {
+      return
+    }
+
+    setSelectedWatch(debugState.watchSampling.expression)
+  }, [debugState.watchSampling.expression, selectedWatch])
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      const state = resizeStateRef.current
+
+      if (!state) {
+        return
+      }
+
+      if (state.side === 'left') {
+        setLeftSidebarWidth(clampSidebarWidth('left', state.startWidth + event.clientX - state.startX))
+        return
+      }
+
+      setRightSidebarWidth(clampSidebarWidth('right', state.startWidth - (event.clientX - state.startX)))
+    }
+
+    const stopResize = () => {
+      resizeStateRef.current = null
+      document.body.classList.remove('sidebar-resizing')
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', stopResize)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', stopResize)
+    }
+  }, [])
+
+  useEffect(() => {
+    void window.stm32Debug
+      .getDebugState()
+      .then((state) => {
+        if (samplingExpressionRef.current !== state.watchSampling.expression) {
+          samplingExpressionRef.current = state.watchSampling.expression
+          setScopeSamples([])
+        }
+
+        setDebugState(state)
+        setSamplingTargetHz(state.watchSampling.targetHz)
+      })
+      .catch(() => {
+        // Ignore initial state load failures and continue relying on push events.
+      })
+
     window.stm32Debug
       .getEnvironmentInfo()
       .then((info) => {
@@ -630,15 +751,17 @@ function App() {
         setStatusText(error.message)
       })
 
-    void window.stm32Debug
-      .checkHostEnvironment()
-      .then((result) => {
-        setEnvironmentCheck(result)
-        setStatusText(result.ready ? '运行环境检查通过' : '运行环境不完整，请根据面板提示补齐')
-      })
-      .catch((error: Error) => {
-        setStatusText(error.message)
-      })
+    if (!detachedPanelMode) {
+      void window.stm32Debug
+        .checkHostEnvironment()
+        .then((result) => {
+          setEnvironmentCheck(result)
+          setStatusText(result.ready ? '运行环境检查通过' : '运行环境不完整，请根据面板提示补齐')
+        })
+        .catch((error: Error) => {
+          setStatusText(error.message)
+        })
+    }
 
     const offBuild = window.stm32Debug.onBuildLog((event) => {
       setBuildLogs((current) => [...current, event].slice(-500))
@@ -670,7 +793,7 @@ function App() {
       offState()
       offSamples()
     }
-  }, [])
+  }, [detachedPanelMode])
 
   useEffect(() => {
     if (!editorReady || !editorRef.current || !monacoRef.current || !activeFile) {
@@ -734,6 +857,10 @@ function App() {
     setProfile((current) => ({ ...current, debuggerPreset: value }))
   }
 
+  function updateDebugTargetPreset(value: DebugTargetPreset) {
+    setProfile((current) => ({ ...current, debugTargetPreset: value }))
+  }
+
   function updateDebugConfigPreset(value: DebugConfigPreset) {
     setProfile((current) => {
       if (value === 'custom') {
@@ -763,6 +890,20 @@ function App() {
         debugConfigPreset: inferDebugConfigPreset(nextProfile),
       }
     })
+  }
+
+  function startSidebarResize(side: ResizableSidebar, clientX: number) {
+    resizeStateRef.current = {
+      side,
+      startX: clientX,
+      startWidth: side === 'left' ? leftSidebarWidth : rightSidebarWidth,
+    }
+    document.body.classList.add('sidebar-resizing')
+  }
+
+  async function openDetachedPanel(kind: DetachedPanelKind) {
+    await window.stm32Debug.openDetachedPanel(kind)
+    setStatusText(kind === 'watch-scope' ? '已打开独立示波器窗口' : '已打开独立监视表窗口')
   }
 
   async function openProjectRoot() {
@@ -1128,11 +1269,174 @@ function App() {
     )
   }
 
+  function renderWatchTableView(detached = false) {
+    return (
+      <div className={detached ? 'watch-tab-content detached-watch-tab-content' : 'watch-tab-content'}>
+        <div className="watch-composer watch-card watch-toolbar-inline">
+          <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="输入变量或表达式" />
+          <button onClick={() => void addWatchExpression()}>
+            <ButtonLabel icon="plus" text="添加" />
+          </button>
+          <details className="action-menu">
+            <summary>
+              <ButtonLabel icon="more" text={detached ? '工具' : '更多监视'} />
+            </summary>
+            <div className="action-menu-list action-menu-list-inline">
+              <button onClick={() => void refreshWatchValues()}>
+                <ButtonLabel icon="refresh" text="刷新监视值" />
+              </button>
+              <button onClick={() => setWatchPanelView('scope')} disabled={!selectedWatch || detached}>
+                <ButtonLabel icon="wave" text="切到示波器" />
+              </button>
+              {!detached ? (
+                <button onClick={() => void openDetachedPanel('watch-table')}>
+                  <ButtonLabel icon="popout" text="独立窗口" />
+                </button>
+              ) : null}
+            </div>
+          </details>
+        </div>
+        <div className="watch-table-card watch-card">
+          <div className="subsection-header">
+            <strong>{detached ? '独立监视表' : '监视表'}</strong>
+            <span>双击值可修改，结构体/class/数组可展开</span>
+          </div>
+          {visibleWatchRows.length > 0 ? (
+            <div className="watch-table-wrap">
+              <table className="watch-table">
+                <colgroup>
+                  <col className="watch-name-column" />
+                  <col className="watch-value-column" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>变量名</th>
+                    <th>值</th>
+                  </tr>
+                </thead>
+                <tbody>{visibleWatchRows.map((entry) => renderWatchRow(entry))}</tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
+          )}
+          <div className="watch-table-footer">
+            <span>已选变量：{selectedWatch || '未选择'}</span>
+            <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
+              <ButtonLabel icon="remove" text="移除当前变量" />
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderScopeView(detached = false) {
+    return (
+      <div className={detached ? 'watch-tab-content detached-watch-tab-content' : 'watch-tab-content'}>
+        <div className="sampling-controls watch-card sampling-controls-wide">
+          <label>
+            <span>采样变量</span>
+            <select value={selectedWatch} onChange={(event) => setSelectedWatch(event.target.value)}>
+              <option value="">请选择变量</option>
+              {selectableWatchExpressions.map((entry) => (
+                <option key={entry.expression} value={entry.expression}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>示波频率</span>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={samplingTargetHz}
+              onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
+            />
+          </label>
+          <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
+            <ButtonLabel icon="wave" text="开始示波" />
+          </button>
+          <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
+            <ButtonLabel icon="stop" text="停止示波" />
+          </button>
+          {!detached ? (
+            <button onClick={() => void openDetachedPanel('watch-scope')} disabled={!selectableWatchExpressions.length}>
+              <ButtonLabel icon="popout" text="独立窗口" />
+            </button>
+          ) : null}
+        </div>
+        <div className="scope-card scope-card-expanded">
+          <div className="scope-header">
+            <div>
+              <h4>{detached ? '独立示波器' : '示波器'}</h4>
+              <span>{debugState.watchSampling.expression ?? selectedWatch ?? '未挂载变量'}</span>
+            </div>
+            <div className="scope-meta">
+              <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
+              <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
+            </div>
+          </div>
+          <WatchOscilloscope
+            expression={debugState.watchSampling.expression}
+            samples={scopeSamples}
+            active={debugState.watchSampling.active}
+            lastNumericValue={debugState.watchSampling.lastNumericValue}
+            lastError={debugState.watchSampling.lastError}
+          />
+        </div>
+      </div>
+    )
+  }
+
   const scopeModeLabel = debugState.watchSampling.active
     ? '实时'
     : debugState.watchSampling.enabled
       ? '待命'
       : '空闲'
+
+  const workspaceStyle: CSSProperties = {
+    '--left-sidebar-width': `${leftSidebarWidth}px`,
+    '--right-sidebar-width': `${rightSidebarWidth}px`,
+  } as CSSProperties
+
+  if (detachedPanelMode === 'watch-table') {
+    return (
+      <div className="detached-panel-shell">
+        <div className="detached-panel-header">
+          <div>
+            <p className="eyebrow">STM32 / 监视表</p>
+            <h1>独立监视表</h1>
+          </div>
+          <div className="status-pill-group">
+            <span className={debugState.connected ? 'status-pill active' : 'status-pill'}>{debugState.connected ? '已连接' : '未连接'}</span>
+            <span className={debugState.running ? 'status-pill running' : 'status-pill'}>{debugState.running ? '运行中' : '已停住'}</span>
+          </div>
+        </div>
+        {renderWatchTableView(true)}
+      </div>
+    )
+  }
+
+  if (detachedPanelMode === 'watch-scope') {
+    return (
+      <div className="detached-panel-shell detached-panel-shell-scope">
+        <div className="detached-panel-header">
+          <div>
+            <p className="eyebrow">STM32 / 示波器</p>
+            <h1>独立示波器</h1>
+          </div>
+          <div className="status-pill-group">
+            <span className={debugState.watchSampling.active ? 'status-pill active' : 'status-pill'}>{scopeModeLabel}</span>
+            <span className="status-pill">{formatFrequency(debugState.watchSampling.achievedHz)}</span>
+          </div>
+        </div>
+        {renderScopeView(true)}
+      </div>
+    )
+  }
 
   return (
     <div className="workbench-shell">
@@ -1155,7 +1459,10 @@ function App() {
       <section className="hero-panel">
         <div className="hero-copy">
           <h2>调试工作台</h2>
-          <p>把构建、下载、断点和变量监视收进更紧凑的三栏布局，常用操作直接可见，低频操作放进菜单。</p>
+          <p>
+            工程：{profile.projectRoot || '未选择'} | 接口：{debuggerPresetLabels[profile.debuggerPreset]} | 目标：{debugTargetPresetLabels[profile.debugTargetPreset]} |
+            配置：{debugConfigPresetLabels[profile.debugConfigPreset]}
+          </p>
         </div>
         <div className="hero-actions">
           <button onClick={() => void openProjectRoot()} disabled={isBusy}>
@@ -1180,7 +1487,7 @@ function App() {
         </div>
       </section>
 
-      <main className="workspace-grid">
+      <main className="workspace-grid" style={workspaceStyle}>
         <aside className="left-panel panel">
           <div className="panel-switcher">
             <button className={leftPanelView === 'project' ? 'active' : ''} onClick={() => setLeftPanelView('project')}>
@@ -1229,7 +1536,7 @@ function App() {
               </div>
               <div className="field-row">
                 <label>
-                  <span>调试器</span>
+                  <span>调试接口</span>
                   <select value={profile.debuggerPreset} onChange={(event) => updateDebuggerPreset(event.target.value as DebuggerPreset)}>
                     {debuggerPresetOptions.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -1239,6 +1546,19 @@ function App() {
                   </select>
                   <small className="field-hint">{debuggerPresetOptions.find((option) => option.value === profile.debuggerPreset)?.hint}</small>
                 </label>
+                <label>
+                  <span>目标芯片 / 板卡</span>
+                  <select value={profile.debugTargetPreset} onChange={(event) => updateDebugTargetPreset(event.target.value as DebugTargetPreset)}>
+                    {debugTargetPresetOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <small className="field-hint">{debugTargetPresetOptions.find((option) => option.value === profile.debugTargetPreset)?.hint}</small>
+                </label>
+              </div>
+              <div className="field-row">
                 <label>
                   <span>调试配置</span>
                   <select value={profile.debugConfigPreset} onChange={(event) => updateDebugConfigPreset(event.target.value as DebugConfigPreset)}>
@@ -1250,21 +1570,21 @@ function App() {
                   </select>
                   <small className="field-hint">{debugConfigPresetOptions.find((option) => option.value === profile.debugConfigPreset)?.hint}</small>
                 </label>
+                <label>
+                  <span>ELF 文件</span>
+                  <div className="chooser-row">
+                    <input value={profile.elfFile} onChange={(event) => updateProfile('elfFile', event.target.value)} />
+                    <button type="button" onClick={() => void chooseFileForField('elfFile')}>
+                      <ButtonLabel icon="folder" text="浏览" />
+                    </button>
+                  </div>
+                </label>
               </div>
               <label>
                 <span>工具链文件</span>
                 <div className="chooser-row">
                   <input value={profile.toolchainFile} onChange={(event) => updateProfile('toolchainFile', event.target.value)} />
                   <button type="button" onClick={() => void chooseFileForField('toolchainFile')}>
-                    <ButtonLabel icon="folder" text="浏览" />
-                  </button>
-                </div>
-              </label>
-              <label>
-                <span>ELF 文件</span>
-                <div className="chooser-row">
-                  <input value={profile.elfFile} onChange={(event) => updateProfile('elfFile', event.target.value)} />
-                  <button type="button" onClick={() => void chooseFileForField('elfFile')}>
                     <ButtonLabel icon="folder" text="浏览" />
                   </button>
                 </div>
@@ -1313,12 +1633,12 @@ function App() {
                     <input value={profile.openOcdPath} onChange={(event) => updateProfile('openOcdPath', event.target.value)} />
                   </label>
                   <label>
-                    <span>{profile.debuggerPreset === 'custom' ? 'OpenOCD 配置' : '目标 / 额外 OpenOCD 配置'}</span>
+                    <span>额外 OpenOCD 配置</span>
                     <textarea rows={3} value={profile.openOcdConfig} onChange={(event) => updateProfile('openOcdConfig', event.target.value)} />
                     <small className="field-hint">
-                      {profile.debuggerPreset === 'custom'
-                        ? '自定义调试器时，这里填写完整 OpenOCD 配置列表。'
-                        : `已自动选择 ${debuggerPresetLabels[profile.debuggerPreset]} 接口配置，这里只需补 target/board 或其他额外配置。`}
+                      {profile.debuggerPreset === 'custom' && profile.debugTargetPreset === 'custom'
+                        ? '接口和目标都为自定义时，这里填写完整 OpenOCD 配置列表。'
+                        : `已自动组合 ${debuggerPresetLabels[profile.debuggerPreset]} 接口和 ${debugTargetPresetLabels[profile.debugTargetPreset]} 目标配置，这里只需补额外命令或自定义覆盖。`}
                     </small>
                   </label>
                   <label>
@@ -1365,6 +1685,8 @@ function App() {
             </section>
           )}
         </aside>
+
+        <div className="panel-resizer" onMouseDown={(event) => startSidebarResize('left', event.clientX)} role="separator" aria-orientation="vertical" aria-label="调整左侧边栏宽度" />
 
         <section className="editor-panel panel">
           <div className="panel-header editor-toolbar">
@@ -1475,6 +1797,8 @@ function App() {
           ) : null}
         </section>
 
+        <div className="panel-resizer" onMouseDown={(event) => startSidebarResize('right', event.clientX)} role="separator" aria-orientation="vertical" aria-label="调整右侧边栏宽度" />
+
         <aside className="right-panel panel">
           <div className="panel-switcher">
             <button className={rightPanelView === 'watch' ? 'active' : ''} onClick={() => setRightPanelView('watch')}>
@@ -1511,102 +1835,9 @@ function App() {
                 </button>
               </div>
 
-              {watchPanelView === 'table' ? (
-                <div className="watch-tab-content">
-                  <div className="watch-composer watch-card watch-toolbar-inline">
-                    <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="输入变量或表达式" />
-                    <button onClick={() => void addWatchExpression()}>
-                      <ButtonLabel icon="plus" text="添加" />
-                    </button>
-                    <details className="action-menu">
-                      <summary>
-                        <ButtonLabel icon="more" text="更多监视" />
-                      </summary>
-                      <div className="action-menu-list action-menu-list-inline">
-                        <button onClick={() => void refreshWatchValues()}>
-                          <ButtonLabel icon="refresh" text="刷新监视值" />
-                        </button>
-                        <button onClick={() => setWatchPanelView('scope')} disabled={!selectedWatch}>
-                          <ButtonLabel icon="wave" text="打开示波器" />
-                        </button>
-                      </div>
-                    </details>
-                  </div>
-                  <div className="watch-table-card watch-card">
-                    <div className="subsection-header">
-                      <strong>监视表</strong>
-                      <span>双击值可修改，结构体/class/数组可展开</span>
-                    </div>
-                    {visibleWatchRows.length > 0 ? (
-                      <div className="watch-table-wrap">
-                        <table className="watch-table">
-                          <colgroup>
-                            <col className="watch-name-column" />
-                            <col className="watch-value-column" />
-                          </colgroup>
-                          <thead>
-                            <tr>
-                              <th>变量名</th>
-                              <th>值</th>
-                            </tr>
-                          </thead>
-                          <tbody>{visibleWatchRows.map((entry) => renderWatchRow(entry))}</tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
-                    )}
-                    <div className="watch-table-footer">
-                      <span>已选变量：{selectedWatch || '未选择'}</span>
-                      <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
-                        <ButtonLabel icon="remove" text="移除当前变量" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+              {watchPanelView === 'table' ? renderWatchTableView() : null}
 
-              {watchPanelView === 'scope' ? (
-                <div className="watch-tab-content">
-                  <div className="sampling-controls watch-card">
-                    <label>
-                      <span>示波频率</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={1000}
-                        value={samplingTargetHz}
-                        onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
-                      />
-                    </label>
-                    <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
-                      <ButtonLabel icon="wave" text="开始示波" />
-                    </button>
-                    <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
-                      <ButtonLabel icon="stop" text="停止示波" />
-                    </button>
-                  </div>
-                  <div className="scope-card scope-card-expanded">
-                    <div className="scope-header">
-                      <div>
-                        <h4>示波器</h4>
-                        <span>{debugState.watchSampling.expression ?? '未挂载变量'}</span>
-                      </div>
-                      <div className="scope-meta">
-                        <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
-                        <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
-                      </div>
-                    </div>
-                    <WatchOscilloscope
-                      expression={debugState.watchSampling.expression}
-                      samples={scopeSamples}
-                      active={debugState.watchSampling.active}
-                      lastNumericValue={debugState.watchSampling.lastNumericValue}
-                      lastError={debugState.watchSampling.lastError}
-                    />
-                  </div>
-                </div>
-              ) : null}
+              {watchPanelView === 'scope' ? renderScopeView() : null}
             </section>
           ) : (
             <section className="panel-section session-panel">
@@ -1663,8 +1894,12 @@ function App() {
                   <dd>{profile.gdbPath}</dd>
                 </div>
                 <div>
-                  <dt>调试器</dt>
+                  <dt>调试接口</dt>
                   <dd>{debuggerPresetLabels[profile.debuggerPreset]}</dd>
+                </div>
+                <div>
+                  <dt>目标</dt>
+                  <dd>{debugTargetPresetLabels[profile.debugTargetPreset]}</dd>
                 </div>
                 <div>
                   <dt>调试配置</dt>

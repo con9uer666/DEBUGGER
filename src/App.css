@@ -112,9 +112,12 @@
 
 .hero-panel p {
   margin: 4px 0 0;
-  max-width: 640px;
+  max-width: 860px;
   font-size: 12px;
   line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hero-panel h2 {
@@ -136,11 +139,47 @@
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 332px) minmax(0, 1fr) minmax(300px, 352px);
+  grid-template-columns:
+    minmax(250px, var(--left-sidebar-width, 308px))
+    10px
+    minmax(0, 1fr)
+    10px
+    minmax(290px, var(--right-sidebar-width, 332px));
   gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.panel-resizer {
+  position: relative;
+  min-width: 10px;
+  cursor: col-resize;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.panel-resizer::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 32px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(248, 183, 73, 0.18), rgba(248, 183, 73, 0.5), rgba(248, 183, 73, 0.18));
+  transform: translate(-50%, -50%);
+}
+
+.panel-resizer:hover {
+  background: rgba(248, 183, 73, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(248, 183, 73, 0.18);
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .panel {
@@ -290,6 +329,10 @@
   align-items: end;
 }
 
+.sampling-controls-wide {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 120px) repeat(3, auto);
+}
+
 .button-label {
   display: inline-flex;
   align-items: center;
@@ -437,6 +480,44 @@ button {
   background: rgba(6, 14, 24, 0.82);
   padding: 12px;
   position: relative;
+}
+
+.detached-panel-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: radial-gradient(circle at top left, rgba(248, 183, 73, 0.08), transparent 24%), #0b111b;
+}
+
+.detached-panel-shell-scope {
+  gap: 12px;
+}
+
+.detached-panel-header {
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(14px);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.detached-panel-header h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.detached-watch-tab-content {
+  flex: 1;
 }
 
 .collapse-card {
@@ -1216,11 +1297,16 @@ button:disabled {
 
 @media (max-width: 1440px) {
   .workspace-grid {
-    grid-template-columns: minmax(280px, 332px) minmax(0, 1fr);
+    grid-template-columns: minmax(240px, var(--left-sidebar-width, 308px)) 8px minmax(0, 1fr);
+  }
+
+  .workspace-grid > .panel-resizer:last-of-type {
+    display: none;
   }
 
   .right-panel {
     grid-column: 1 / -1;
+    min-height: 300px;
   }
 }
 
@@ -1240,7 +1326,15 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .workspace-grid > .panel-resizer {
+    display: none;
+  }
+
   .sampling-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .sampling-controls-wide {
     grid-template-columns: 1fr;
   }
 
@@ -1263,6 +1357,10 @@ button:disabled {
   .primary-action-strip,
   .hero-actions {
     width: 100%;
+  }
+
+  .hero-panel p {
+    white-space: normal;
   }
 }
 

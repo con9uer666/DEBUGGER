@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
+  DetachedPanelKind,
   DebugControlCommand,
   FileDialogRequest,
   LogEvent,
@@ -36,6 +37,9 @@ const api: Stm32DebugApi = {
   checkHostEnvironment() {
     return ipcRenderer.invoke('app:checkHostEnvironment')
   },
+  getDebugState() {
+    return ipcRenderer.invoke('debug:getState')
+  },
   scanProject(projectRoot: string, buildDir?: string) {
     return ipcRenderer.invoke('project:scan', projectRoot, buildDir)
   },
@@ -50,6 +54,9 @@ const api: Stm32DebugApi = {
   },
   generateVsCodeFiles(profile) {
     return ipcRenderer.invoke('vscode:generate', profile)
+  },
+  openDetachedPanel(kind: DetachedPanelKind) {
+    return ipcRenderer.invoke('window:openDetachedPanel', kind)
   },
   startDebugSession(request: StartDebugRequest) {
     return ipcRenderer.invoke('debug:start', request)

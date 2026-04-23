@@ -3,6 +3,7 @@ import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
 
 import type {
+  DetachedPanelKind,
   DebugControlCommand,
   EnvironmentInfo,
   FileDialogRequest,
@@ -20,17 +21,20 @@ app.setPath('userData', userDataDirectory)
 app.setPath('sessionData', path.join(userDataDirectory, 'session-data'))
 
 let mainWindow: BrowserWindow | null = null
+const detachedPanelWindows = new Map<DetachedPanelKind, BrowserWindow>()
 
-function sendToRenderer(channel: string, payload: unknown) {
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-    return
+function sendToRenderers(channel: string, payload: unknown) {
+  const windows = [mainWindow, ...detachedPanelWindows.values()].filter(
+    (window): window is BrowserWindow => Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed()),
+  )
+
+  for (const window of windows) {
+    window.webContents.send(channel, payload)
   }
-
-  mainWindow.webContents.send(channel, payload)
 }
 
 const debugSession = new DebugSession((channel, payload) => {
-  sendToRenderer(channel, payload)
+  sendToRenderers(channel, payload)
 })
 
 function getPreloadPath() {
@@ -38,11 +42,43 @@ function getPreloadPath() {
 }
 
 async function createMainWindow() {
+  return await createWindow('main')
+}
+
+async function loadWindowContent(browserWindow: BrowserWindow, panelKind?: DetachedPanelKind) {
+  if (isDev) {
+    const baseUrl = new URL(process.env.VITE_DEV_SERVER_URL as string)
+
+    if (panelKind) {
+      baseUrl.searchParams.set('panel', panelKind)
+    }
+
+    await browserWindow.loadURL(baseUrl.toString())
+    return
+  }
+
+  await browserWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'), {
+    query: panelKind ? { panel: panelKind } : undefined,
+  })
+}
+
+async function createWindow(mode: 'main' | DetachedPanelKind) {
+  const isDetachedPanel = mode !== 'main'
   const browserWindow = new BrowserWindow({
     width: 1680,
     height: 980,
     minWidth: 1280,
     minHeight: 760,
+    ...(isDetachedPanel
+      ? {
+          width: mode === 'watch-scope' ? 980 : 760,
+          height: mode === 'watch-scope' ? 720 : 860,
+          minWidth: mode === 'watch-scope' ? 760 : 560,
+          minHeight: 520,
+          title: mode === 'watch-scope' ? 'STM32 Debug Studio - 独立示波器' : 'STM32 Debug Studio - 独立监视表',
+          autoHideMenuBar: true,
+        }
+      : {}),
     backgroundColor: '#0d1117',
     webPreferences: {
       preload: getPreloadPath(),
@@ -52,19 +88,31 @@ async function createMainWindow() {
     },
   })
 
-  if (isDev) {
-    await browserWindow.loadURL(process.env.VITE_DEV_SERVER_URL as string)
-  } else {
-    await browserWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
-  }
+  await loadWindowContent(browserWindow, isDetachedPanel ? mode : undefined)
 
   browserWindow.on('closed', () => {
-    if (mainWindow === browserWindow) {
+    if (!isDetachedPanel && mainWindow === browserWindow) {
       mainWindow = null
+    }
+
+    if (isDetachedPanel) {
+      detachedPanelWindows.delete(mode)
     }
   })
 
   return browserWindow
+}
+
+async function openDetachedPanel(kind: DetachedPanelKind) {
+  const existing = detachedPanelWindows.get(kind)
+
+  if (existing && !existing.isDestroyed()) {
+    existing.focus()
+    return
+  }
+
+  const browserWindow = await createWindow(kind)
+  detachedPanelWindows.set(kind, browserWindow)
 }
 
 function getEnvironmentInfo() {
@@ -121,6 +169,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:checkHostEnvironment', async () => {
     return await checkHostEnvironment()
   })
+  ipcMain.handle('debug:getState', async () => {
+    return debugSession.getState()
+  })
   ipcMain.handle('project:scan', async (_event, projectRoot: string, buildDir?: string) => {
     return await scanProject(projectRoot, buildDir)
   })
@@ -130,18 +181,22 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('cmake:configure', async (_event, request) => {
     return await configureProject(request, (payload) => {
-      sendToRenderer('build:log', payload)
+      sendToRenderers('build:log', payload)
     })
   })
 
   ipcMain.handle('cmake:build', async (_event, request) => {
     return await buildProject(request, (payload) => {
-      sendToRenderer('build:log', payload)
+      sendToRenderers('build:log', payload)
     })
   })
 
   ipcMain.handle('vscode:generate', async (_event, request) => {
     return await generateVsCodeFiles(request)
+  })
+
+  ipcMain.handle('window:openDetachedPanel', async (_event, kind: DetachedPanelKind) => {
+    await openDetachedPanel(kind)
   })
 
   ipcMain.handle('debug:start', async (_event, request: StartDebugRequest) => {
