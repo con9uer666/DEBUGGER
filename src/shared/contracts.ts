@@ -129,15 +129,19 @@ export interface WatchSample {
   value: number
 }
 
-export interface WatchSampleBatch {
+export interface WatchSampleSeriesBatch {
   expression: string
   samples: WatchSample[]
+}
+
+export interface WatchSampleBatch {
+  traces: WatchSampleSeriesBatch[]
   targetHz: number
   achievedHz: number
 }
 
 export interface WatchSamplingRequest {
-  expression: string | null
+  expressions: string[]
   enabled: boolean
   targetHz: number
 }
@@ -147,18 +151,26 @@ export interface WatchExpansionRequest {
   expanded: boolean
 }
 
-export interface WatchSamplingStatus {
-  enabled: boolean
-  active: boolean
-  expression: string | null
-  targetHz: number
-  achievedHz: number
-  maxTargetHz: number
+export interface WatchSamplingTraceStatus {
+  expression: string
   sampleCount: number
   lastSampleAt: number | null
   lastValue: string
   lastNumericValue: number | null
   lastError: string | null
+}
+
+export interface WatchSamplingStatus {
+  enabled: boolean
+  active: boolean
+  expressions: string[]
+  targetHz: number
+  achievedHz: number
+  maxTargetHz: number
+  cycleCount: number
+  lastCycleAt: number | null
+  lastError: string | null
+  traces: WatchSamplingTraceStatus[]
 }
 
 export interface DebugSessionState {
@@ -274,15 +286,14 @@ export const emptyDebugSessionState: DebugSessionState = {
   watchSampling: {
     enabled: false,
     active: false,
-    expression: null,
+    expressions: [],
     targetHz: 1000,
     achievedHz: 0,
     maxTargetHz: 1000,
-    sampleCount: 0,
-    lastSampleAt: null,
-    lastValue: '',
-    lastNumericValue: null,
+    cycleCount: 0,
+    lastCycleAt: null,
     lastError: null,
+    traces: [],
   },
   lastStopReason: null,
 }

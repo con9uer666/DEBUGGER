@@ -16,6 +16,7 @@ import {
   type WatchExpansionRequest,
   type WatchSample,
   type WatchSamplingRequest,
+  type WatchSamplingTraceStatus,
   type WatchValue,
 } from '../../src/shared/contracts'
 import { parseGdbMiLine, type MiRecord, type MiValue } from './miParser'
@@ -198,7 +199,7 @@ export class DebugSession {
   private watchSamplerTimer: NodeJS.Timeout | null = null
   private watchStateEmitTimer: NodeJS.Timeout | null = null
   private watchSamplerBusy = false
-  private watchSampleBuffer: WatchSample[] = []
+  private readonly watchSampleBuffers = new Map<string, WatchSample[]>()
   private watchSampleRateWindow: number[] = []
   private lastWatchBatchEmitAt = 0
 
@@ -252,18 +253,84 @@ export class DebugSession {
     this.watchSamplerTimer = null
   }
 
-  private flushWatchSamples() {
-    const expression = this.state.watchSampling.expression
+  private getWatchSamplingExpressionsKey(expressions = this.state.watchSampling.expressions) {
+    return expressions.join('\u0000')
+  }
 
-    if (!expression || this.watchSampleBuffer.length === 0) {
+  private syncWatchSamplingTraces() {
+    const traceByExpression = new Map(this.state.watchSampling.traces.map((trace) => [trace.expression, trace]))
+
+    this.state.watchSampling.traces = this.state.watchSampling.expressions.map((expression) => {
+      const existing = traceByExpression.get(expression)
+
+      if (existing) {
+        return existing
+      }
+
+      return {
+        expression,
+        sampleCount: 0,
+        lastSampleAt: null,
+        lastValue: '',
+        lastNumericValue: null,
+        lastError: null,
+      } satisfies WatchSamplingTraceStatus
+    })
+  }
+
+  private getWatchSamplingTrace(expression: string) {
+    const existing = this.state.watchSampling.traces.find((trace) => trace.expression === expression)
+
+    if (existing) {
+      return existing
+    }
+
+    const trace = {
+      expression,
+      sampleCount: 0,
+      lastSampleAt: null,
+      lastValue: '',
+      lastNumericValue: null,
+      lastError: null,
+    } satisfies WatchSamplingTraceStatus
+
+    this.state.watchSampling.traces.push(trace)
+    return trace
+  }
+
+  private getBufferedWatchSampleCount() {
+    let total = 0
+
+    for (const samples of this.watchSampleBuffers.values()) {
+      total += samples.length
+    }
+
+    return total
+  }
+
+  private flushWatchSamples() {
+    const traces = this.state.watchSampling.expressions
+      .map((expression) => {
+        const bufferedSamples = this.watchSampleBuffers.get(expression)
+
+        if (!bufferedSamples || bufferedSamples.length === 0) {
+          return null
+        }
+
+        return {
+          expression,
+          samples: bufferedSamples.splice(0),
+        }
+      })
+      .filter((trace): trace is { expression: string; samples: WatchSample[] } => trace !== null)
+
+    if (traces.length === 0) {
       return
     }
 
-    const samples = this.watchSampleBuffer.splice(0)
     this.lastWatchBatchEmitAt = Date.now()
     this.emit('debug:samples', {
-      expression,
-      samples,
+      traces,
       targetHz: this.state.watchSampling.targetHz,
       achievedHz: this.state.watchSampling.achievedHz,
     })
@@ -282,12 +349,20 @@ export class DebugSession {
   private resetWatchSamplingRuntime(message: string | null) {
     this.pauseWatchSampling(message)
     this.clearQueuedStateEmit()
-    this.watchSampleBuffer = []
+    this.watchSampleBuffers.clear()
     this.lastWatchBatchEmitAt = 0
-    this.state.watchSampling.sampleCount = 0
-    this.state.watchSampling.lastSampleAt = null
-    this.state.watchSampling.lastValue = ''
-    this.state.watchSampling.lastNumericValue = null
+    this.state.watchSampling.cycleCount = 0
+    this.state.watchSampling.lastCycleAt = null
+
+    for (const trace of this.state.watchSampling.traces) {
+      trace.sampleCount = 0
+      trace.lastSampleAt = null
+      trace.lastValue = ''
+      trace.lastNumericValue = null
+      trace.lastError = null
+    }
+
+    this.state.watchSampling.lastError = message
   }
 
   private clearWatchVariableObjectMappings() {
@@ -523,7 +598,7 @@ export class DebugSession {
   }
 
   private scheduleWatchSample(delayMs = 0) {
-    if (!this.state.watchSampling.active || !this.state.watchSampling.expression) {
+    if (!this.state.watchSampling.active || this.state.watchSampling.expressions.length === 0) {
       return
     }
 
@@ -535,11 +610,10 @@ export class DebugSession {
   }
 
   private syncWatchSamplingState() {
-    const expression = this.state.watchSampling.expression
-    const hasExpression = Boolean(expression && this.watchExpressions.includes(expression))
+    const hasExpressions = this.state.watchSampling.expressions.length > 0
     const shouldSample = Boolean(
       this.state.watchSampling.enabled &&
-        hasExpression &&
+        hasExpressions &&
         this.gdbProcess &&
         this.state.connected &&
         !this.state.running,
@@ -548,9 +622,8 @@ export class DebugSession {
     if (!shouldSample) {
       if (this.state.running) {
         this.pauseWatchSampling('目标运行中，采样已暂停')
-      } else if (this.state.watchSampling.enabled && !hasExpression) {
+      } else if (this.state.watchSampling.enabled && !hasExpressions) {
         this.state.watchSampling.enabled = false
-        this.state.watchSampling.expression = null
         this.resetWatchSamplingRuntime('采样变量已被移除')
       } else if (this.state.watchSampling.enabled && !this.gdbProcess) {
         this.pauseWatchSampling('调试器未连接')
@@ -561,6 +634,7 @@ export class DebugSession {
       return
     }
 
+    this.syncWatchSamplingTraces()
     this.state.watchSampling.active = true
     this.state.watchSampling.lastError = null
 
@@ -580,9 +654,9 @@ export class DebugSession {
   }
 
   private async runWatchSample() {
-    const expression = this.state.watchSampling.expression
+    const expressions = [...this.state.watchSampling.expressions]
 
-    if (!expression || !this.state.watchSampling.enabled) {
+    if (!this.state.watchSampling.enabled || expressions.length === 0) {
       return
     }
 
@@ -600,45 +674,57 @@ export class DebugSession {
     this.watchSamplerBusy = true
     const targetIntervalMs = 1000 / this.state.watchSampling.targetHz
     const startedAt = performance.now()
+    const expressionKey = this.getWatchSamplingExpressionsKey(expressions)
 
     try {
-      const payload = await this.sendCommand(`-data-evaluate-expression ${quoteMiString(expression)}`)
-      const value = asString(payload.value) ?? ''
-      const numericValue = parseWatchNumericValue(value)
       const sampleTimestamp = Date.now()
+      this.state.watchSampling.cycleCount += 1
+      this.state.watchSampling.lastCycleAt = sampleTimestamp
 
-      this.updateWatchValue(expression, value)
-      this.state.watchSampling.sampleCount += 1
-      this.state.watchSampling.lastSampleAt = sampleTimestamp
-      this.state.watchSampling.lastValue = value
-      this.state.watchSampling.lastNumericValue = numericValue
-      this.state.watchSampling.lastError = numericValue === null ? '当前值不是纯数字，示波器无法绘制曲线' : null
-      this.recordWatchSampleRate(sampleTimestamp)
+      for (const expression of expressions) {
+        const trace = this.getWatchSamplingTrace(expression)
 
-      if (numericValue !== null) {
-        this.watchSampleBuffer.push({
-          timestamp: sampleTimestamp,
-          value: numericValue,
-        })
+        try {
+          const payload = await this.sendCommand(`-data-evaluate-expression ${quoteMiString(expression)}`)
+          const value = asString(payload.value) ?? ''
+          const numericValue = parseWatchNumericValue(value)
+
+          this.updateWatchValue(expression, value)
+          trace.sampleCount += 1
+          trace.lastSampleAt = sampleTimestamp
+          trace.lastValue = value
+          trace.lastNumericValue = numericValue
+          trace.lastError = numericValue === null ? '当前值不是纯数字，示波器无法绘制曲线' : null
+
+          if (numericValue !== null) {
+            const bufferedSamples = this.watchSampleBuffers.get(expression) ?? []
+            bufferedSamples.push({
+              timestamp: sampleTimestamp,
+              value: numericValue,
+            })
+            this.watchSampleBuffers.set(expression, bufferedSamples)
+          }
+        } catch (error) {
+          const message = (error as Error).message
+          this.updateWatchValue(expression, '', message)
+          trace.lastSampleAt = sampleTimestamp
+          trace.lastValue = ''
+          trace.lastNumericValue = null
+          trace.lastError = message
+        }
       }
 
-      if (
-        this.watchSampleBuffer.length >= WATCH_SAMPLE_BATCH_SIZE ||
-        sampleTimestamp - this.lastWatchBatchEmitAt >= WATCH_SAMPLE_BATCH_INTERVAL_MS
-      ) {
+      this.recordWatchSampleRate(sampleTimestamp)
+
+      if (this.getBufferedWatchSampleCount() >= WATCH_SAMPLE_BATCH_SIZE || sampleTimestamp - this.lastWatchBatchEmitAt >= WATCH_SAMPLE_BATCH_INTERVAL_MS) {
         this.flushWatchSamples()
       }
 
       this.queueStateEmit()
-    } catch (error) {
-      const message = (error as Error).message
-      this.updateWatchValue(expression, '', message)
-      this.state.watchSampling.lastError = message
-      this.queueStateEmit(0)
     } finally {
       this.watchSamplerBusy = false
 
-      if (!this.state.watchSampling.enabled || this.state.watchSampling.expression !== expression) {
+      if (!this.state.watchSampling.enabled || this.getWatchSamplingExpressionsKey() !== expressionKey) {
         return
       }
 
@@ -660,6 +746,7 @@ export class DebugSession {
     this.state.lastStopReason = null
     this.resetWatchObjects()
     this.state.watches = this.watchExpressions.map((expression) => this.createDisconnectedWatch(expression))
+    this.syncWatchSamplingTraces()
     this.resetWatchSamplingRuntime(this.state.watchSampling.enabled ? '调试器未连接' : null)
   }
 
@@ -1012,17 +1099,20 @@ export class DebugSession {
 
     this.state.watches = watches
 
-    if (this.state.watchSampling.expression) {
-      const sampledWatch = this.findWatchByExpression(this.state.watchSampling.expression, watches)
+    this.syncWatchSamplingTraces()
 
-      if (sampledWatch) {
-        this.state.watchSampling.lastValue = sampledWatch.value
-        this.state.watchSampling.lastNumericValue = parseWatchNumericValue(sampledWatch.value)
-        this.state.watchSampling.lastError = sampledWatch.error ?? this.state.watchSampling.lastError
-      } else if (this.state.watchSampling.enabled) {
-        this.state.watchSampling.enabled = false
-        this.state.watchSampling.expression = null
-        this.resetWatchSamplingRuntime('采样变量已不可用')
+    for (const trace of this.state.watchSampling.traces) {
+      const sampledWatch = this.findWatchByExpression(trace.expression, watches)
+
+      if (!sampledWatch) {
+        continue
+      }
+
+      trace.lastValue = sampledWatch.value
+      trace.lastNumericValue = parseWatchNumericValue(sampledWatch.value)
+
+      if (sampledWatch.error) {
+        trace.lastError = sampledWatch.error
       }
     }
 
@@ -1302,20 +1392,6 @@ export class DebugSession {
   async setWatchExpressions(expressions: string[]) {
     this.watchExpressions = [...new Set(expressions.map((expression) => expression.trim()).filter(Boolean))]
 
-    if (
-      this.state.watchSampling.expression &&
-      !this.watchExpressions.some(
-        (expression) =>
-          this.state.watchSampling.expression === expression ||
-          this.state.watchSampling.expression?.startsWith(`${expression}.`) ||
-          this.state.watchSampling.expression?.startsWith(`${expression}[`),
-      )
-    ) {
-      this.state.watchSampling.enabled = false
-      this.state.watchSampling.expression = null
-      this.resetWatchSamplingRuntime('采样变量已被移除')
-    }
-
     return await this.refreshWatches()
   }
 
@@ -1334,12 +1410,13 @@ export class DebugSession {
   }
 
   async configureWatchSampling(request: WatchSamplingRequest) {
-    const nextExpression = request.expression?.trim() || null
+    const nextExpressions = [...new Set(request.expressions.map((expression) => expression.trim()).filter(Boolean))]
 
-    this.state.watchSampling.enabled = request.enabled && Boolean(nextExpression)
-    this.state.watchSampling.expression = nextExpression
+    this.state.watchSampling.enabled = request.enabled && nextExpressions.length > 0
+    this.state.watchSampling.expressions = nextExpressions
     this.state.watchSampling.targetHz = clampWatchSamplingHz(request.targetHz)
     this.state.watchSampling.maxTargetHz = MAX_WATCH_SAMPLING_HZ
+    this.syncWatchSamplingTraces()
     this.resetWatchSamplingRuntime(this.state.watchSampling.enabled ? '等待目标停住后开始采样' : null)
     this.syncWatchSamplingState()
     this.emitState()

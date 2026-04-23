@@ -259,6 +259,8 @@ function ButtonLabel({ icon, text }: { icon: IconName; text: string }) {
 const MAX_SCOPE_POINTS = 600
 const SCOPE_WIDTH = 760
 const SCOPE_HEIGHT = 240
+const SCOPE_PALETTE = ['#f8b749', '#57d0ff', '#70f0a8', '#ff8d78', '#d9a6ff', '#ffd76e']
+const SCOPE_TIMEBASE_OPTIONS = [250, 500, 1000, 2000, 5000, 10000]
 
 function clampSamplingHz(value: number) {
   const normalized = Number.isFinite(value) ? Math.round(value) : 1000
@@ -283,6 +285,25 @@ function formatNumericValue(value: number | null) {
   }
 
   return value.toFixed(3).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
+}
+
+function formatScopeTimebase(value: number) {
+  if (value >= 1000) {
+    const seconds = value / 1000
+    return Number.isInteger(seconds) ? `${seconds} s` : `${seconds.toFixed(1)} s`
+  }
+
+  return `${value} ms`
+}
+
+function formatScopeRelativeTime(value: number) {
+  if (value === 0) {
+    return '0'
+  }
+
+  const absolute = Math.abs(value)
+  const suffix = absolute >= 1000 ? `${(absolute / 1000).toFixed(absolute % 1000 === 0 ? 0 : 1)}s` : `${Math.round(absolute)}ms`
+  return value < 0 ? `-${suffix}` : suffix
 }
 
 function formatSessionStatus(status: string) {
@@ -321,109 +342,177 @@ function formatControlCommand(command: DebugControlCommand) {
   }
 }
 
-interface WatchOscilloscopeProps {
-  expression: string | null
+interface ScopeTraceView {
+  expression: string
   samples: WatchSample[]
-  active: boolean
+  lastValue: string
   lastNumericValue: number | null
   lastError: string | null
+  color: string
 }
 
-function WatchOscilloscope({ expression, samples, active, lastNumericValue, lastError }: WatchOscilloscopeProps) {
-  const geometry = useMemo(() => {
-    const paddingX = 22
-    const paddingY = 18
-    const plotWidth = SCOPE_WIDTH - paddingX * 2
-    const plotHeight = SCOPE_HEIGHT - paddingY * 2
+interface WatchOscilloscopeProps {
+  traces: ScopeTraceView[]
+  active: boolean
+  timebaseMs: number
+  statusMessage: string | null
+}
 
-    if (samples.length < 2) {
+function WatchOscilloscope({ traces, active, timebaseMs, statusMessage }: WatchOscilloscopeProps) {
+  const geometry = useMemo(() => {
+    const paddingLeft = 56
+    const paddingRight = 16
+    const paddingTop = 18
+    const paddingBottom = 28
+    const plotWidth = SCOPE_WIDTH - paddingLeft - paddingRight
+    const plotHeight = SCOPE_HEIGHT - paddingTop - paddingBottom
+    const latestTimestamp = traces.reduce((latest, trace) => {
+      const lastSample = trace.samples[trace.samples.length - 1]
+      return Math.max(latest, lastSample?.timestamp ?? 0)
+    }, 0)
+    const windowStart = latestTimestamp > 0 ? Math.max(0, latestTimestamp - timebaseMs) : 0
+    const visibleTraces = traces.map((trace) => ({
+      ...trace,
+      samples: trace.samples.filter((sample) => sample.timestamp >= windowStart),
+    }))
+    const values = visibleTraces.flatMap((trace) => trace.samples.map((sample) => sample.value))
+
+    if (traces.length === 0 || values.length === 0 || latestTimestamp === 0) {
       return {
-        points: '',
-        minValue: null,
-        maxValue: null,
-        durationMs: 0,
-        lastPoint: null as { x: number; y: number } | null,
-        paddingX,
-        paddingY,
+        plottedTraces: [] as Array<ScopeTraceView & { points: string; lastPoint: { x: number; y: number } | null }>,
+        yTicks: [] as Array<{ y: number; label: string }>,
+        xTicks: Array.from({ length: 6 }, (_, index) => {
+          const ratio = index / 5
+          return {
+            x: paddingLeft + plotWidth * ratio,
+            label: formatScopeRelativeTime((ratio - 1) * timebaseMs),
+          }
+        }),
+        hasSamples: false,
         plotWidth,
         plotHeight,
+        paddingLeft,
+        paddingRight,
+        paddingTop,
+        paddingBottom,
       }
     }
 
-    const firstTimestamp = samples[0].timestamp
-    const lastTimestamp = samples[samples.length - 1].timestamp
-    const durationMs = Math.max(1, lastTimestamp - firstTimestamp)
-    const values = samples.map((sample) => sample.value)
     const minValue = Math.min(...values)
     const maxValue = Math.max(...values)
     const span = maxValue - minValue || Math.max(Math.abs(maxValue), 1)
     const paddedMin = minValue - span * 0.12
     const paddedMax = maxValue + span * 0.12
     const paddedSpan = paddedMax - paddedMin || 1
+    const plottedTraces = visibleTraces.map((trace) => {
+      const points = trace.samples
+        .map((sample) => {
+          const ratio = Math.min(1, Math.max(0, (sample.timestamp - windowStart) / Math.max(1, timebaseMs)))
+          const x = paddingLeft + ratio * plotWidth
+          const normalized = (sample.value - paddedMin) / paddedSpan
+          const y = paddingTop + (1 - normalized) * plotHeight
+          return `${x.toFixed(2)},${y.toFixed(2)}`
+        })
+        .join(' ')
 
-    const points = samples
-      .map((sample) => {
-        const x = paddingX + ((sample.timestamp - firstTimestamp) / durationMs) * plotWidth
-        const normalized = (sample.value - paddedMin) / paddedSpan
-        const y = SCOPE_HEIGHT - paddingY - normalized * plotHeight
-        return `${x.toFixed(2)},${y.toFixed(2)}`
-      })
-      .join(' ')
+      const lastSample = trace.samples.length > 0 ? trace.samples[trace.samples.length - 1] : null
+      const lastPoint = lastSample
+        ? {
+            x: paddingLeft + Math.min(1, Math.max(0, (lastSample.timestamp - windowStart) / Math.max(1, timebaseMs))) * plotWidth,
+            y: paddingTop + (1 - (lastSample.value - paddedMin) / paddedSpan) * plotHeight,
+          }
+        : null
 
-    const lastSample = samples[samples.length - 1]
-    const lastX = paddingX + ((lastSample.timestamp - firstTimestamp) / durationMs) * plotWidth
-    const lastNormalized = (lastSample.value - paddedMin) / paddedSpan
-    const lastY = SCOPE_HEIGHT - paddingY - lastNormalized * plotHeight
+      return {
+        ...trace,
+        points,
+        lastPoint,
+      }
+    })
+
+    const yTicks = Array.from({ length: 5 }, (_, index) => {
+      const ratio = index / 4
+      return {
+        y: paddingTop + plotHeight * ratio,
+        label: formatNumericValue(paddedMax - paddedSpan * ratio),
+      }
+    })
 
     return {
-      points,
-      minValue,
-      maxValue,
-      durationMs,
-      lastPoint: { x: lastX, y: lastY },
-      paddingX,
-      paddingY,
+      plottedTraces,
+      yTicks,
+      xTicks: Array.from({ length: 6 }, (_, index) => {
+        const ratio = index / 5
+        return {
+          x: paddingLeft + plotWidth * ratio,
+          label: formatScopeRelativeTime((ratio - 1) * timebaseMs),
+        }
+      }),
+      hasSamples: true,
       plotWidth,
       plotHeight,
+      paddingLeft,
+      paddingRight,
+      paddingTop,
+      paddingBottom,
     }
-  }, [samples])
+  }, [timebaseMs, traces])
 
-  if (!expression) {
-    return <div className="scope-empty">先从监视列表中选择一个变量，再开启示波采样。</div>
+  if (traces.length === 0) {
+    return <div className="scope-empty">先把变量加入示波器，再开始采样。</div>
   }
 
-  if (samples.length < 2 || !geometry.points) {
+  if (!geometry.hasSamples) {
     return (
       <div className="scope-empty">
-        <strong>{expression}</strong>
-        <span>{lastError ?? (active ? '正在等待数值样本...' : '示波器待命中，点击“开始示波”即可采样。')}</span>
-        <small>当前数值 {formatNumericValue(lastNumericValue)}</small>
+        <strong>{traces.length} 条示波通道已就绪</strong>
+        <span>{statusMessage ?? (active ? '正在等待数值样本...' : '示波器待命中，点击“开始示波”即可采样。')}</span>
+        <div className="scope-empty-list">
+          {traces.map((trace) => (
+            <div key={trace.expression} className="scope-empty-item">
+              <span>{trace.expression}</span>
+              <small>{trace.lastError ?? `当前值 ${trace.lastValue || formatNumericValue(trace.lastNumericValue)}`}</small>
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
 
   return (
     <div className="scope-stage">
-      <div className="scope-axis-label top">MAX {formatNumericValue(geometry.maxValue)}</div>
-      <div className="scope-axis-label bottom">MIN {formatNumericValue(geometry.minValue)}</div>
       <svg className="scope-canvas" viewBox={`0 0 ${SCOPE_WIDTH} ${SCOPE_HEIGHT}`} preserveAspectRatio="none">
-        {Array.from({ length: 5 }, (_, index) => {
-          const y = geometry.paddingY + (geometry.plotHeight / 4) * index
-
-          return <line key={`h-${index}`} className="scope-grid-line" x1={geometry.paddingX} y1={y} x2={SCOPE_WIDTH - geometry.paddingX} y2={y} />
-        })}
-        {Array.from({ length: 6 }, (_, index) => {
-          const x = geometry.paddingX + (geometry.plotWidth / 5) * index
-
-          return <line key={`v-${index}`} className="scope-grid-line" x1={x} y1={geometry.paddingY} x2={x} y2={SCOPE_HEIGHT - geometry.paddingY} />
-        })}
-        <polyline className="scope-trace" points={geometry.points} />
-        {geometry.lastPoint ? <circle className="scope-trace-dot" cx={geometry.lastPoint.x} cy={geometry.lastPoint.y} r="4" /> : null}
+        {geometry.yTicks.map((tick, index) => (
+          <g key={`y-${index}`}>
+            <line className="scope-grid-line" x1={geometry.paddingLeft} y1={tick.y} x2={SCOPE_WIDTH - geometry.paddingRight} y2={tick.y} />
+            <text className="scope-axis-tick" x={10} y={tick.y + 4}>
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        {geometry.xTicks.map((tick, index) => (
+          <g key={`x-${index}`}>
+            <line className="scope-grid-line" x1={tick.x} y1={geometry.paddingTop} x2={tick.x} y2={SCOPE_HEIGHT - geometry.paddingBottom} />
+            <text className="scope-axis-tick" x={tick.x} y={SCOPE_HEIGHT - 8} textAnchor={index === 0 ? 'start' : index === geometry.xTicks.length - 1 ? 'end' : 'middle'}>
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        {geometry.plottedTraces.map((trace) => (
+          <g key={trace.expression}>
+            <polyline className="scope-trace" points={trace.points} style={{ stroke: trace.color }} />
+            {trace.lastPoint ? <circle className="scope-trace-dot" cx={trace.lastPoint.x} cy={trace.lastPoint.y} r="4" style={{ fill: trace.color }} /> : null}
+          </g>
+        ))}
       </svg>
       <div className="scope-footer">
-        <span>{expression}</span>
-        <span>窗口 {Math.round(geometry.durationMs)} ms</span>
-        <span>最新值 {formatNumericValue(lastNumericValue)}</span>
+        <span>时基 {formatScopeTimebase(timebaseMs)}</span>
+        <span>{active ? '正在连续采样' : '示波已暂停'}</span>
+        {traces.map((trace) => (
+          <span key={trace.expression} className="scope-legend-item" style={{ '--scope-trace-color': trace.color } as CSSProperties}>
+            {trace.expression}: {trace.lastValue || formatNumericValue(trace.lastNumericValue)}
+          </span>
+        ))}
       </div>
     </div>
   )
@@ -605,6 +694,14 @@ function flattenWatchRows(watches: WatchValue[]) {
   return rows
 }
 
+function uniqueExpressions(expressions: string[]) {
+  return [...new Set(expressions.map((expression) => expression.trim()).filter(Boolean))]
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function App() {
   const detachedPanelMode = useMemo(() => getDetachedPanelMode(), [])
   const [environment, setEnvironment] = useState<EnvironmentInfo>(defaultEnvironment)
@@ -624,8 +721,10 @@ function App() {
   const [selectedWatch, setSelectedWatch] = useState('')
   const [editingWatchExpression, setEditingWatchExpression] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
-  const [scopeSamples, setScopeSamples] = useState<WatchSample[]>([])
+  const [scopeSamplesByExpression, setScopeSamplesByExpression] = useState<Record<string, WatchSample[]>>({})
+  const [scopeExpressionDraft, setScopeExpressionDraft] = useState('')
   const [samplingTargetHz, setSamplingTargetHz] = useState(1000)
+  const [scopeTimebaseMs, setScopeTimebaseMs] = useState(1000)
   const [statusText, setStatusText] = useState('就绪')
   const [isBusy, setIsBusy] = useState(false)
   const [editorReady, setEditorReady] = useState(false)
@@ -635,13 +734,32 @@ function App() {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationIdsRef = useRef<string[]>([])
-  const samplingExpressionRef = useRef<string | null>(null)
+  const samplingExpressionsKeyRef = useRef('')
   const resizeStateRef = useRef<{ side: ResizableSidebar; startX: number; startWidth: number } | null>(null)
+  const contextMenuPositionRef = useRef<Monaco.Position | null>(null)
+  const pendingEditorRevealRef = useRef<{ path: string; lineNumber: number; column: number } | null>(null)
+  const sourceFileCacheRef = useRef(new Map<string, OpenFileResult>())
+  const scanRef = useRef(scan)
+  const activeFileRef = useRef<OpenFileResult | null>(activeFile)
+  const definitionLookupRef = useRef<(symbol: string, preferredPath?: string) => Promise<{ path: string; lineNumber: number; column: number } | null>>(
+    async () => null,
+  )
+  const editorActionHandlersRef = useRef<{
+    addToWatch: (editor: Monaco.editor.IStandaloneCodeEditor) => Promise<void>
+    addToScope: (editor: Monaco.editor.IStandaloneCodeEditor) => Promise<void>
+    goToDefinition: (editor: Monaco.editor.IStandaloneCodeEditor) => Promise<void>
+  }>({
+    addToWatch: async () => undefined,
+    addToScope: async () => undefined,
+    goToDefinition: async () => undefined,
+  })
+  const editorEnhancementsRegisteredRef = useRef(false)
 
   const breakpointMap = useMemo(() => mapBreakpointsByFile(debugState), [debugState])
   const buildLogText = useMemo(() => createLogText(buildLogs), [buildLogs])
   const debugLogText = useMemo(() => createLogText(debugLogs), [debugLogs])
   const visibleWatchRows = useMemo(() => flattenWatchRows(debugState.watches), [debugState.watches])
+  const scopedExpressionSet = useMemo(() => new Set(debugState.watchSampling.expressions), [debugState.watchSampling.expressions])
   const selectableWatchExpressions = useMemo(() => {
     const mapped = visibleWatchRows.map(({ entry }) => ({
       expression: entry.expression,
@@ -662,6 +780,33 @@ function App() {
       return entry.name.toLowerCase().includes(keyword) || entry.relativePath.toLowerCase().includes(keyword)
     })
   }, [scan.sourceFiles, sourceFilter])
+  const scopeTraceViews = useMemo(() => {
+    return debugState.watchSampling.traces.map((trace, index) => ({
+      ...trace,
+      samples: scopeSamplesByExpression[trace.expression] ?? [],
+      color: SCOPE_PALETTE[index % SCOPE_PALETTE.length],
+    }))
+  }, [debugState.watchSampling.traces, scopeSamplesByExpression])
+
+  function syncScopeSampleBuffers(expressions: string[]) {
+    setScopeSamplesByExpression((current) => {
+      const next: Record<string, WatchSample[]> = {}
+
+      for (const expression of expressions) {
+        next[expression] = current[expression] ?? []
+      }
+
+      return next
+    })
+  }
+
+  useEffect(() => {
+    scanRef.current = scan
+  }, [scan])
+
+  useEffect(() => {
+    activeFileRef.current = activeFile
+  }, [activeFile])
 
   useEffect(() => {
     if (!selectedWatch) {
@@ -681,12 +826,30 @@ function App() {
   }, [editingWatchExpression, selectedWatch, visibleWatchRows])
 
   useEffect(() => {
-    if (selectedWatch || !debugState.watchSampling.expression) {
+    if (selectedWatch || debugState.watchSampling.expressions.length === 0) {
       return
     }
 
-    setSelectedWatch(debugState.watchSampling.expression)
-  }, [debugState.watchSampling.expression, selectedWatch])
+    setSelectedWatch(debugState.watchSampling.expressions[0])
+  }, [debugState.watchSampling.expressions, selectedWatch])
+
+  useEffect(() => {
+    const lastScopeExpression =
+      debugState.watchSampling.expressions.length > 0
+        ? debugState.watchSampling.expressions[debugState.watchSampling.expressions.length - 1]
+        : ''
+    const fallbackExpression = selectedWatch || lastScopeExpression || selectableWatchExpressions[0]?.expression || ''
+
+    if (scopeExpressionDraft === fallbackExpression) {
+      return
+    }
+
+    if (scopeExpressionDraft && selectableWatchExpressions.some((entry) => entry.expression === scopeExpressionDraft)) {
+      return
+    }
+
+    setScopeExpressionDraft(fallbackExpression)
+  }, [debugState.watchSampling.expressions, scopeExpressionDraft, selectableWatchExpressions, selectedWatch])
 
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
@@ -722,9 +885,11 @@ function App() {
     void window.stm32Debug
       .getDebugState()
       .then((state) => {
-        if (samplingExpressionRef.current !== state.watchSampling.expression) {
-          samplingExpressionRef.current = state.watchSampling.expression
-          setScopeSamples([])
+        const samplingKey = state.watchSampling.expressions.join('\u0000')
+
+        if (samplingExpressionsKeyRef.current !== samplingKey) {
+          samplingExpressionsKeyRef.current = samplingKey
+          syncScopeSampleBuffers(state.watchSampling.expressions)
         }
 
         setDebugState(state)
@@ -770,9 +935,11 @@ function App() {
       setDebugLogs((current) => [...current, event].slice(-500))
     })
     const offState = window.stm32Debug.onDebugState((state) => {
-      if (samplingExpressionRef.current !== state.watchSampling.expression) {
-        samplingExpressionRef.current = state.watchSampling.expression
-        setScopeSamples([])
+      const samplingKey = state.watchSampling.expressions.join('\u0000')
+
+      if (samplingExpressionsKeyRef.current !== samplingKey) {
+        samplingExpressionsKeyRef.current = samplingKey
+        syncScopeSampleBuffers(state.watchSampling.expressions)
       }
 
       setDebugState(state)
@@ -780,11 +947,15 @@ function App() {
       setStatusText(`${formatSessionStatus(state.status)} | ${formatFrame(state.currentFrame)}`)
     })
     const offSamples = window.stm32Debug.onWatchSamples((batch) => {
-      if (samplingExpressionRef.current !== batch.expression) {
-        return
-      }
+      setScopeSamplesByExpression((current) => {
+        const next = { ...current }
 
-      setScopeSamples((current) => [...current, ...batch.samples].slice(-MAX_SCOPE_POINTS))
+        for (const trace of batch.traces) {
+          next[trace.expression] = [...(next[trace.expression] ?? []), ...trace.samples].slice(-MAX_SCOPE_POINTS)
+        }
+
+        return next
+      })
     })
 
     return () => {
@@ -834,6 +1005,29 @@ function App() {
 
     decorationIdsRef.current = editorRef.current.deltaDecorations(decorationIdsRef.current, decorations)
   }, [activeFile, breakpointMap, debugState.currentFrame, editorReady])
+
+  useEffect(() => {
+    if (!editorReady || !editorRef.current || !activeFile) {
+      return
+    }
+
+    const target = pendingEditorRevealRef.current
+
+    if (!target || target.path !== activeFile.path) {
+      return
+    }
+
+    const lineNumber = Math.max(1, target.lineNumber)
+    const column = Math.max(1, target.column)
+    editorRef.current.revealPositionInCenter({ lineNumber, column })
+    editorRef.current.setPosition({ lineNumber, column })
+
+    if (monacoRef.current) {
+      editorRef.current.setSelection(new monacoRef.current.Range(lineNumber, column, lineNumber, column + 1))
+    }
+
+    pendingEditorRevealRef.current = null
+  }, [activeFile, editorReady])
 
   async function withBusyState<T>(label: string, action: () => Promise<T>) {
     setIsBusy(true)
@@ -943,11 +1137,136 @@ function App() {
     })
   }
 
-  async function openFile(entry: ProjectFileEntry) {
-    const file = await window.stm32Debug.readSourceFile(entry.path)
+  function resolveProjectFileEntry(filePath: string): ProjectFileEntry {
+    return (
+      scanRef.current.sourceFiles.find((entry) => entry.path === filePath) ?? {
+        name: filePath.split(/[\\/]/).pop() ?? filePath,
+        path: filePath,
+        relativePath: filePath,
+        language: activeFileRef.current?.language ?? 'c',
+      }
+    )
+  }
+
+  async function readSourceFileCached(filePath: string) {
+    const cached = sourceFileCacheRef.current.get(filePath)
+
+    if (cached) {
+      return cached
+    }
+
+    const file = await window.stm32Debug.readSourceFile(filePath)
+    sourceFileCacheRef.current.set(filePath, file)
+    return file
+  }
+
+  function normalizeEditorExpression(expression: string) {
+    return expression
+      .trim()
+      .replace(/\s*(->|\.)\s*/g, '$1')
+      .replace(/\s*\[\s*/g, '[')
+      .replace(/\s*\]\s*/g, ']')
+      .replace(/\s+/g, '')
+  }
+
+  function getEditorExpression(editor: Monaco.editor.IStandaloneCodeEditor) {
+    const model = editor.getModel()
+
+    if (!model) {
+      return ''
+    }
+
+    const selection = editor.getSelection()
+
+    if (selection && !selection.isEmpty()) {
+      const selectedText = normalizeEditorExpression(model.getValueInRange(selection))
+
+      if (selectedText && !/[\r\n]/.test(selectedText) && selectedText.length <= 160) {
+        return selectedText
+      }
+    }
+
+    const position = contextMenuPositionRef.current ?? editor.getPosition()
+
+    if (!position) {
+      return ''
+    }
+
+    return model.getWordAtPosition(position)?.word ?? ''
+  }
+
+  function getEditorSymbol(editor: Monaco.editor.IStandaloneCodeEditor) {
+    const model = editor.getModel()
+    const position = contextMenuPositionRef.current ?? editor.getPosition()
+
+    if (!model || !position) {
+      return ''
+    }
+
+    return model.getWordAtPosition(position)?.word ?? ''
+  }
+
+  async function findSymbolDefinition(symbol: string, preferredPath?: string) {
+    const normalizedSymbol = symbol.trim()
+
+    if (!normalizedSymbol) {
+      return null
+    }
+
+    const escapedSymbol = escapeRegExp(normalizedSymbol)
+    const patterns = [
+      new RegExp(`^\\s*#\\s*define\\s+${escapedSymbol}\\b`),
+      new RegExp(`^\\s*(?:struct|class|enum|union)\\s+${escapedSymbol}\\b`),
+      new RegExp(`^\\s*typedef\\b.*\\b${escapedSymbol}\\b`),
+      new RegExp(`^\\s*(?:template\\s*<[^>]+>\\s*)?(?:[A-Za-z_][\\w:<>~*&]*\\s+)+${escapedSymbol}\\s*\\([^;]*\\)\\s*(?:const\\b)?\\s*(?:noexcept\\b)?\\s*(?:\\{|;)?`),
+      new RegExp(`^\\s*(?:extern\\s+)?(?:const\\s+|static\\s+|volatile\\s+|unsigned\\s+|signed\\s+|long\\s+|short\\s+|struct\\s+|class\\s+|enum\\s+|union\\s+|[A-Za-z_][\\w:<>~*&]*\\s+)+${escapedSymbol}\\b(?:\\s*(?:=|;|\\[|\\{|$))`),
+    ]
+
+    const preferredEntries = preferredPath ? scanRef.current.sourceFiles.filter((entry) => entry.path === preferredPath) : []
+    const remainingEntries = scanRef.current.sourceFiles.filter((entry) => entry.path !== preferredPath)
+    const headerEntries = remainingEntries.filter((entry) => /\.(h|hpp|hh|hxx)$/i.test(entry.name))
+    const sourceEntries = remainingEntries.filter((entry) => !/\.(h|hpp|hh|hxx)$/i.test(entry.name))
+    const orderedEntries = [...preferredEntries, ...headerEntries, ...sourceEntries]
+
+    for (const entry of orderedEntries) {
+      const file = await readSourceFileCached(entry.path)
+      const lines = file.content.split(/\r?\n/)
+
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index]
+
+        if (!patterns.some((pattern) => pattern.test(line))) {
+          continue
+        }
+
+        const column = Math.max(1, line.search(new RegExp(`\\b${escapedSymbol}\\b`)) + 1)
+
+        return {
+          path: entry.path,
+          lineNumber: index + 1,
+          column,
+        }
+      }
+    }
+
+    return null
+  }
+
+  async function openFile(entry: ProjectFileEntry, location?: { lineNumber: number; column?: number }) {
+    const file = await readSourceFileCached(entry.path)
     setActiveFile(file)
+    activeFileRef.current = file
     setActiveTab('editor')
-    setStatusText(`已打开 ${entry.relativePath}`)
+
+    if (location) {
+      pendingEditorRevealRef.current = {
+        path: entry.path,
+        lineNumber: location.lineNumber,
+        column: location.column ?? 1,
+      }
+    }
+
+    setStatusText(location ? `已打开 ${entry.relativePath}:${location.lineNumber}` : `已打开 ${entry.relativePath}`)
   }
 
   async function chooseFileForField(key: 'toolchainFile' | 'elfFile') {
@@ -1049,10 +1368,68 @@ function App() {
     setDebugState(state)
   }
 
+  async function addEditorSelectionToWatch(editor: Monaco.editor.IStandaloneCodeEditor) {
+    const expression = getEditorExpression(editor)
+
+    if (!expression) {
+      setStatusText('请先在代码区选中变量或把光标放到变量上。')
+      return
+    }
+
+    await addWatchExpression(expression)
+    setStatusText(`已从代码区添加监视变量 ${expression}`)
+  }
+
+  async function addEditorSelectionToScope(editor: Monaco.editor.IStandaloneCodeEditor) {
+    const expression = getEditorExpression(editor)
+
+    if (!expression) {
+      setStatusText('请先在代码区选中变量或把光标放到变量上。')
+      return
+    }
+
+    await addScopeExpression(expression, true)
+    setStatusText(`已从代码区把 ${expression} 加入示波器`)
+  }
+
+  async function goToEditorDefinition(editor: Monaco.editor.IStandaloneCodeEditor) {
+    const symbol = getEditorSymbol(editor)
+
+    if (!symbol) {
+      setStatusText('当前光标位置没有可跳转的符号。')
+      return
+    }
+
+    const currentPath = editor.getModel()?.uri.fsPath || activeFileRef.current?.path
+    const definition = await findSymbolDefinition(symbol, currentPath)
+
+    if (!definition) {
+      setStatusText(`没有找到 ${symbol} 的定义。`)
+      return
+    }
+
+    await openFile(resolveProjectFileEntry(definition.path), {
+      lineNumber: definition.lineNumber,
+      column: definition.column,
+    })
+    setStatusText(`已跳转到 ${symbol} 的定义`)
+  }
+
+  definitionLookupRef.current = findSymbolDefinition
+  editorActionHandlersRef.current = {
+    addToWatch: addEditorSelectionToWatch,
+    addToScope: addEditorSelectionToScope,
+    goToDefinition: goToEditorDefinition,
+  }
+
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
     setEditorReady(true)
+
+    editor.onContextMenu((event) => {
+      contextMenuPositionRef.current = event.target.position ?? editor.getPosition() ?? null
+    })
 
     editor.onMouseDown((event) => {
       if (
@@ -1071,22 +1448,90 @@ function App() {
 
       void toggleBreakpoint(lineNumber)
     })
+
+    editor.addAction({
+      id: 'stm32-debug.add-watch',
+      label: '添加到监视器',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.2,
+      run: async () => {
+        await editorActionHandlersRef.current.addToWatch(editor)
+      },
+    })
+
+    editor.addAction({
+      id: 'stm32-debug.add-scope',
+      label: '添加到示波器',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.3,
+      run: async () => {
+        await editorActionHandlersRef.current.addToScope(editor)
+      },
+    })
+
+    editor.addAction({
+      id: 'stm32-debug.go-to-definition',
+      label: '转到定义',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.1,
+      keybindings: [monaco.KeyCode.F12],
+      run: async () => {
+        await editorActionHandlersRef.current.goToDefinition(editor)
+      },
+    })
+
+    if (!editorEnhancementsRegisteredRef.current) {
+      const registerDefinitionProvider = (language: 'c' | 'cpp') => {
+        monaco.languages.registerDefinitionProvider(language, {
+          provideDefinition: async (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
+            const symbol = model.getWordAtPosition(position)?.word ?? ''
+
+            if (!symbol) {
+              return null
+            }
+
+            const definition = await definitionLookupRef.current(symbol, model.uri.fsPath || activeFileRef.current?.path)
+
+            if (!definition) {
+              return null
+            }
+
+            return {
+              uri: monaco.Uri.file(definition.path),
+              range: new monaco.Range(
+                definition.lineNumber,
+                definition.column,
+                definition.lineNumber,
+                definition.column + symbol.length,
+              ),
+            }
+          },
+        })
+      }
+
+      registerDefinitionProvider('c')
+      registerDefinitionProvider('cpp')
+      editorEnhancementsRegisteredRef.current = true
+    }
   }
 
-  async function addWatchExpression() {
-    const expression = watchDraft.trim()
+  async function addWatchExpression(expressionOverride = watchDraft) {
+    const expression = expressionOverride.trim()
 
     if (!expression) {
       return
     }
 
-    const nextExpressions = [...debugState.watches.map((entry) => entry.expression), expression]
+    const nextExpressions = uniqueExpressions([...debugState.watches.map((entry) => entry.expression), expression])
     const state = await window.stm32Debug.setWatchExpressions(nextExpressions)
     setDebugState(state)
     setRightPanelView('watch')
     setWatchPanelView('table')
     setSelectedWatch(expression)
-    setWatchDraft('')
+
+    if (expressionOverride === watchDraft) {
+      setWatchDraft('')
+    }
   }
 
   async function refreshWatchValues() {
@@ -1095,26 +1540,84 @@ function App() {
     setRightPanelView('watch')
   }
 
-  async function configureWatchSampling(enabled: boolean) {
-    const expression = enabled ? selectedWatch : null
+  async function setScopeExpressions(expressions: string[], enabled = debugState.watchSampling.enabled, statusMessage?: string) {
+    const normalizedExpressions = uniqueExpressions(expressions)
+    const state = await window.stm32Debug.configureWatchSampling({
+      expressions: normalizedExpressions,
+      enabled: enabled && normalizedExpressions.length > 0,
+      targetHz: samplingTargetHz,
+    })
 
-    if (enabled && !expression) {
-      setStatusText('请先选择一个监视变量，再开启示波。')
+    setDebugState(state)
+    setRightPanelView('watch')
+    setWatchPanelView('scope')
+
+    if (normalizedExpressions.length > 0) {
+      const lastExpression = normalizedExpressions[normalizedExpressions.length - 1] ?? normalizedExpressions[0]
+      setSelectedWatch(lastExpression)
+      setScopeExpressionDraft(lastExpression)
+    }
+
+    if (statusMessage) {
+      setStatusText(statusMessage)
+    }
+
+    return state
+  }
+
+  async function addScopeExpression(expression: string, ensureWatch = false) {
+    const normalizedExpression = expression.trim()
+
+    if (!normalizedExpression) {
+      setStatusText('请先选择一个变量，再加入示波器。')
       return
     }
 
-    await withBusyState(enabled ? `开启 ${expression} 示波采样` : '停止示波采样', async () => {
+    if (ensureWatch && !debugState.watches.some((entry) => entry.expression === normalizedExpression)) {
+      await addWatchExpression(normalizedExpression)
+    }
+
+    await setScopeExpressions(
+      [...debugState.watchSampling.expressions, normalizedExpression],
+      debugState.watchSampling.enabled,
+      `已将 ${normalizedExpression} 加入示波器`,
+    )
+  }
+
+  async function removeScopeExpression(expression: string) {
+    const nextExpressions = debugState.watchSampling.expressions.filter((entry) => entry !== expression)
+
+    await setScopeExpressions(
+      nextExpressions,
+      debugState.watchSampling.enabled,
+      nextExpressions.length > 0 ? `已移除 ${expression} 示波通道` : '示波通道已清空',
+    )
+  }
+
+  async function configureWatchSampling(enabled: boolean) {
+    const nextExpressions = uniqueExpressions(
+      debugState.watchSampling.expressions.length > 0
+        ? debugState.watchSampling.expressions
+        : [scopeExpressionDraft || selectedWatch],
+    )
+
+    if (enabled && nextExpressions.length === 0) {
+      setStatusText('请先把变量加入示波器，再开启采样。')
+      return
+    }
+
+    await withBusyState(enabled ? `开启 ${nextExpressions.length} 条曲线示波采样` : '停止示波采样', async () => {
       const state = await window.stm32Debug.configureWatchSampling({
-        expression,
+        expressions: nextExpressions,
         enabled,
         targetHz: samplingTargetHz,
       })
       setDebugState(state)
       setRightPanelView('watch')
-      setWatchPanelView(enabled ? 'scope' : 'table')
+      setWatchPanelView('scope')
       setStatusText(
         enabled
-          ? `示波器已连接到 ${expression}，目标频率 ${formatFrequency(state.watchSampling.targetHz)}`
+          ? `示波器已连接 ${nextExpressions.length} 条曲线，目标频率 ${formatFrequency(state.watchSampling.targetHz)}`
           : '示波采样已停止',
       )
     })
@@ -1128,7 +1631,17 @@ function App() {
     const nextExpressions = debugState.watches
       .map((entry) => entry.expression)
       .filter((entry) => entry !== expression)
-    const state = await window.stm32Debug.setWatchExpressions(nextExpressions)
+    let state = await window.stm32Debug.setWatchExpressions(nextExpressions)
+
+    if (scopedExpressionSet.has(expression)) {
+      const nextScopeExpressions = debugState.watchSampling.expressions.filter((entry) => entry !== expression)
+      state = await window.stm32Debug.configureWatchSampling({
+        expressions: nextScopeExpressions,
+        enabled: debugState.watchSampling.enabled && nextScopeExpressions.length > 0,
+        targetHz: samplingTargetHz,
+      })
+    }
+
     setDebugState(state)
 
     if (selectedWatch === expression) {
@@ -1186,14 +1699,15 @@ function App() {
   function renderWatchRow(row: FlattenedWatchRow) {
     const { entry, isLast, treeContinuations } = row
     const isSelected = selectedWatch === entry.expression
-    const isScoped = debugState.watchSampling.expression === entry.expression
+    const isScoped = scopedExpressionSet.has(entry.expression)
+    const scopeTrace = debugState.watchSampling.traces.find((trace) => trace.expression === entry.expression)
     const hintText = entry.error
       ? '读取失败'
       : isScoped
         ? debugState.watchSampling.active
           ? '示波采样中'
-          : '示波已挂起'
-        : '点击后可编辑或挂到示波器'
+          : scopeTrace?.lastError ?? '示波已待命'
+        : '点击后可编辑或加入示波器'
 
     const isEditing = editingWatchExpression === entry.expression
     const labelText = entry.level === 0 ? entry.expression : entry.displayName
@@ -1285,8 +1799,8 @@ function App() {
               <button onClick={() => void refreshWatchValues()}>
                 <ButtonLabel icon="refresh" text="刷新监视值" />
               </button>
-              <button onClick={() => setWatchPanelView('scope')} disabled={!selectedWatch || detached}>
-                <ButtonLabel icon="wave" text="切到示波器" />
+              <button onClick={() => void addScopeExpression(selectedWatch)} disabled={!selectedWatch || detached}>
+                <ButtonLabel icon="wave" text="加入示波器" />
               </button>
               {!detached ? (
                 <button onClick={() => void openDetachedPanel('watch-table')}>
@@ -1336,8 +1850,8 @@ function App() {
       <div className={detached ? 'watch-tab-content detached-watch-tab-content' : 'watch-tab-content'}>
         <div className="sampling-controls watch-card sampling-controls-wide">
           <label>
-            <span>采样变量</span>
-            <select value={selectedWatch} onChange={(event) => setSelectedWatch(event.target.value)}>
+            <span>加入变量</span>
+            <select value={scopeExpressionDraft} onChange={(event) => setScopeExpressionDraft(event.target.value)}>
               <option value="">请选择变量</option>
               {selectableWatchExpressions.map((entry) => (
                 <option key={entry.expression} value={entry.expression}>
@@ -1346,6 +1860,9 @@ function App() {
               ))}
             </select>
           </label>
+          <button onClick={() => void addScopeExpression(scopeExpressionDraft)} disabled={!scopeExpressionDraft || isBusy}>
+            <ButtonLabel icon="plus" text="加入曲线" />
+          </button>
           <label>
             <span>示波频率</span>
             <input
@@ -1356,11 +1873,24 @@ function App() {
               onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
             />
           </label>
-          <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
+          <label>
+            <span>时基</span>
+            <select value={scopeTimebaseMs} onChange={(event) => setScopeTimebaseMs(Number(event.target.value || '1000'))}>
+              {SCOPE_TIMEBASE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {formatScopeTimebase(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button onClick={() => void configureWatchSampling(true)} disabled={!debugState.watchSampling.expressions.length || isBusy}>
             <ButtonLabel icon="wave" text="开始示波" />
           </button>
           <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
             <ButtonLabel icon="stop" text="停止示波" />
+          </button>
+          <button onClick={() => void setScopeExpressions([], false, '示波通道已清空')} disabled={!debugState.watchSampling.expressions.length || isBusy}>
+            <ButtonLabel icon="remove" text="清空曲线" />
           </button>
           {!detached ? (
             <button onClick={() => void openDetachedPanel('watch-scope')} disabled={!selectableWatchExpressions.length}>
@@ -1368,23 +1898,43 @@ function App() {
             </button>
           ) : null}
         </div>
+        <div className="scope-channel-list watch-card">
+          {scopeTraceViews.length > 0 ? (
+            scopeTraceViews.map((trace) => (
+              <div key={trace.expression} className="scope-channel-item" style={{ '--scope-trace-color': trace.color } as CSSProperties}>
+                <div className="scope-channel-main">
+                  <strong>{trace.expression}</strong>
+                  <small>{trace.lastError ?? `当前值 ${trace.lastValue || formatNumericValue(trace.lastNumericValue)}`}</small>
+                </div>
+                <button onClick={() => void removeScopeExpression(trace.expression)} disabled={isBusy}>
+                  <ButtonLabel icon="remove" text="移除" />
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="empty-list-state compact-empty-state">还没有示波通道。先把监视变量加入示波器。</div>
+          )}
+        </div>
         <div className="scope-card scope-card-expanded">
           <div className="scope-header">
             <div>
               <h4>{detached ? '独立示波器' : '示波器'}</h4>
-              <span>{debugState.watchSampling.expression ?? selectedWatch ?? '未挂载变量'}</span>
+              <span>
+                {debugState.watchSampling.expressions.length > 0
+                  ? `${debugState.watchSampling.expressions.length} 条曲线 | 时基 ${formatScopeTimebase(scopeTimebaseMs)}`
+                  : '未挂载变量'}
+              </span>
             </div>
             <div className="scope-meta">
-              <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
-              <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
+              <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
+              <small>{debugState.watchSampling.lastError ?? '支持多变量同时显示，纵轴会按当前数据自动标数值刻度'}</small>
             </div>
           </div>
           <WatchOscilloscope
-            expression={debugState.watchSampling.expression}
-            samples={scopeSamples}
+            traces={scopeTraceViews}
             active={debugState.watchSampling.active}
-            lastNumericValue={debugState.watchSampling.lastNumericValue}
-            lastError={debugState.watchSampling.lastError}
+            timebaseMs={scopeTimebaseMs}
+            statusMessage={debugState.watchSampling.lastError}
           />
         </div>
       </div>
@@ -1822,9 +2372,10 @@ function App() {
                 </div>
               </div>
               <div className="watch-summary-row">
-                <span className="watch-summary-pill">当前变量：{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</span>
+                <span className="watch-summary-pill">示波通道：{debugState.watchSampling.expressions.length || 0}</span>
                 <span className="watch-summary-pill">当前频率：{formatFrequency(debugState.watchSampling.achievedHz)}</span>
                 <span className="watch-summary-pill">目标频率：{formatFrequency(debugState.watchSampling.targetHz)}</span>
+                <span className="watch-summary-pill">当前时基：{formatScopeTimebase(scopeTimebaseMs)}</span>
               </div>
               <div className="mini-tab-strip">
                 <button className={watchPanelView === 'table' ? 'active' : ''} onClick={() => setWatchPanelView('table')}>
@@ -1863,7 +2414,7 @@ function App() {
                         path: frame.fullPath,
                         relativePath: frame.file ?? frame.fullPath,
                         language: 'c',
-                      })
+                      }, frame.line ? { lineNumber: frame.line, column: 1 } : undefined)
                     }}
                   >
                     <strong>{frame.functionName}</strong>
