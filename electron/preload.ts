@@ -6,6 +6,8 @@ import type {
   LogEvent,
   StartDebugRequest,
   Stm32DebugApi,
+  WatchSampleBatch,
+  WatchSamplingRequest,
 } from '../src/shared/contracts'
 
 function subscribe<T>(channel: string, listener: (payload: T) => void) {
@@ -66,6 +68,9 @@ const api: Stm32DebugApi = {
   setWatchExpressions(expressions: string[]) {
     return ipcRenderer.invoke('debug:setWatchExpressions', expressions)
   },
+  configureWatchSampling(request: WatchSamplingRequest) {
+    return ipcRenderer.invoke('debug:configureWatchSampling', request)
+  },
   refreshWatches() {
     return ipcRenderer.invoke('debug:refreshWatches')
   },
@@ -80,6 +85,9 @@ const api: Stm32DebugApi = {
   },
   onDebugState(listener) {
     return subscribe('debug:state', listener)
+  },
+  onWatchSamples(listener: (batch: WatchSampleBatch) => void) {
+    return subscribe('debug:samples', listener)
   },
 }
 

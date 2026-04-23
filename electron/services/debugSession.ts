@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 
 import {
@@ -10,12 +11,14 @@ import {
   type LogEvent,
   type StackFrame,
   type StartDebugRequest,
+  type WatchSample,
+  type WatchSamplingRequest,
   type WatchValue,
 } from '../../src/shared/contracts'
 import { parseGdbMiLine, type MiRecord, type MiValue } from './miParser'
 import { createTimestamp, pathExists, resolveProjectPath, toPosixPath } from './processUtils'
 
-type SessionEmitter = (channel: 'debug:log' | 'debug:state', payload: unknown) => void
+type SessionEmitter = (channel: 'debug:log' | 'debug:state' | 'debug:samples', payload: unknown) => void
 
 interface PendingCommand {
   command: string
@@ -65,6 +68,57 @@ function quoteMiString(value: string) {
   return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
 }
 
+const MAX_WATCH_SAMPLING_HZ = 1000
+const WATCH_SAMPLE_BATCH_SIZE = 64
+const WATCH_SAMPLE_BATCH_INTERVAL_MS = 50
+const WATCH_SAMPLE_STATE_EMIT_INTERVAL_MS = 120
+
+function clampWatchSamplingHz(value: number) {
+  const normalized = Number.isFinite(value) ? Math.round(value) : MAX_WATCH_SAMPLING_HZ
+  return Math.min(MAX_WATCH_SAMPLING_HZ, Math.max(1, normalized))
+}
+
+function parseWatchNumericValue(value: string) {
+  const trimmed = value.trim()
+
+  if (!trimmed) {
+    return null
+  }
+
+  const directHex = /^([+-])?0x([0-9a-f]+)$/i.exec(trimmed)
+
+  if (directHex) {
+    const parsed = Number.parseInt(`${directHex[1] ?? ''}${directHex[2]}`, 16)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  const directNumber = Number(trimmed)
+
+  if (Number.isFinite(directNumber)) {
+    return directNumber
+  }
+
+  const firstToken = trimmed.match(/[+-]?0x[0-9a-f]+|[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/i)?.[0]
+
+  if (!firstToken) {
+    return null
+  }
+
+  if (/^([+-])?0x/i.test(firstToken)) {
+    const hexMatch = /^([+-])?0x([0-9a-f]+)$/i.exec(firstToken)
+
+    if (!hexMatch) {
+      return null
+    }
+
+    const parsed = Number.parseInt(`${hexMatch[1] ?? ''}${hexMatch[2]}`, 16)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  const parsed = Number(firstToken)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 export class DebugSession {
   private readonly emit: SessionEmitter
   private readonly state: DebugSessionState = cloneState(emptyDebugSessionState)
@@ -76,6 +130,12 @@ export class DebugSession {
   private gdbBuffer = ''
   private sequence = 1
   private watchExpressions: string[] = []
+  private watchSamplerTimer: NodeJS.Timeout | null = null
+  private watchStateEmitTimer: NodeJS.Timeout | null = null
+  private watchSamplerBusy = false
+  private watchSampleBuffer: WatchSample[] = []
+  private watchSampleRateWindow: number[] = []
+  private lastWatchBatchEmitAt = 0
 
   constructor(emit: SessionEmitter) {
     this.emit = emit
@@ -98,6 +158,221 @@ export class DebugSession {
     this.emit('debug:state', cloneState(this.state))
   }
 
+  private queueStateEmit(delayMs = WATCH_SAMPLE_STATE_EMIT_INTERVAL_MS) {
+    if (this.watchStateEmitTimer) {
+      return
+    }
+
+    this.watchStateEmitTimer = setTimeout(() => {
+      this.watchStateEmitTimer = null
+      this.emitState()
+    }, delayMs)
+  }
+
+  private clearQueuedStateEmit() {
+    if (!this.watchStateEmitTimer) {
+      return
+    }
+
+    clearTimeout(this.watchStateEmitTimer)
+    this.watchStateEmitTimer = null
+  }
+
+  private clearWatchSamplerTimer() {
+    if (!this.watchSamplerTimer) {
+      return
+    }
+
+    clearTimeout(this.watchSamplerTimer)
+    this.watchSamplerTimer = null
+  }
+
+  private flushWatchSamples() {
+    const expression = this.state.watchSampling.expression
+
+    if (!expression || this.watchSampleBuffer.length === 0) {
+      return
+    }
+
+    const samples = this.watchSampleBuffer.splice(0)
+    this.lastWatchBatchEmitAt = Date.now()
+    this.emit('debug:samples', {
+      expression,
+      samples,
+      targetHz: this.state.watchSampling.targetHz,
+      achievedHz: this.state.watchSampling.achievedHz,
+    })
+  }
+
+  private pauseWatchSampling(message: string | null) {
+    this.clearWatchSamplerTimer()
+    this.flushWatchSamples()
+    this.watchSamplerBusy = false
+    this.watchSampleRateWindow = []
+    this.state.watchSampling.active = false
+    this.state.watchSampling.achievedHz = 0
+    this.state.watchSampling.lastError = message
+  }
+
+  private resetWatchSamplingRuntime(message: string | null) {
+    this.pauseWatchSampling(message)
+    this.clearQueuedStateEmit()
+    this.watchSampleBuffer = []
+    this.lastWatchBatchEmitAt = 0
+    this.state.watchSampling.sampleCount = 0
+    this.state.watchSampling.lastSampleAt = null
+    this.state.watchSampling.lastValue = ''
+    this.state.watchSampling.lastNumericValue = null
+  }
+
+  private updateWatchValue(expression: string, value: string, error?: string) {
+    const nextValue: WatchValue = {
+      expression,
+      value,
+      error,
+    }
+    const index = this.state.watches.findIndex((entry) => entry.expression === expression)
+
+    if (index >= 0) {
+      this.state.watches[index] = {
+        ...this.state.watches[index],
+        ...nextValue,
+      }
+      return
+    }
+
+    this.state.watches.push(nextValue)
+  }
+
+  private scheduleWatchSample(delayMs = 0) {
+    if (!this.state.watchSampling.active || !this.state.watchSampling.expression) {
+      return
+    }
+
+    this.clearWatchSamplerTimer()
+    this.watchSamplerTimer = setTimeout(() => {
+      this.watchSamplerTimer = null
+      void this.runWatchSample()
+    }, Math.max(0, delayMs))
+  }
+
+  private syncWatchSamplingState() {
+    const expression = this.state.watchSampling.expression
+    const hasExpression = Boolean(expression && this.watchExpressions.includes(expression))
+    const shouldSample = Boolean(
+      this.state.watchSampling.enabled &&
+        hasExpression &&
+        this.gdbProcess &&
+        this.state.connected &&
+        !this.state.running,
+    )
+
+    if (!shouldSample) {
+      if (this.state.running) {
+        this.pauseWatchSampling('目标运行中，采样已暂停')
+      } else if (this.state.watchSampling.enabled && !hasExpression) {
+        this.state.watchSampling.enabled = false
+        this.state.watchSampling.expression = null
+        this.resetWatchSamplingRuntime('采样变量已被移除')
+      } else if (this.state.watchSampling.enabled && !this.gdbProcess) {
+        this.pauseWatchSampling('调试器未连接')
+      } else {
+        this.pauseWatchSampling(this.state.watchSampling.enabled ? '等待目标停住后开始采样' : null)
+      }
+
+      return
+    }
+
+    this.state.watchSampling.active = true
+    this.state.watchSampling.lastError = null
+
+    if (!this.watchSamplerTimer && !this.watchSamplerBusy) {
+      this.scheduleWatchSample()
+    }
+  }
+
+  private recordWatchSampleRate(sampleTimestamp: number) {
+    this.watchSampleRateWindow.push(sampleTimestamp)
+
+    while (this.watchSampleRateWindow.length > 0 && this.watchSampleRateWindow[0] < sampleTimestamp - 1000) {
+      this.watchSampleRateWindow.shift()
+    }
+
+    this.state.watchSampling.achievedHz = this.watchSampleRateWindow.length
+  }
+
+  private async runWatchSample() {
+    const expression = this.state.watchSampling.expression
+
+    if (!expression || !this.state.watchSampling.enabled) {
+      return
+    }
+
+    if (!this.gdbProcess || !this.state.connected || this.state.running) {
+      this.syncWatchSamplingState()
+      this.queueStateEmit(0)
+      return
+    }
+
+    if (this.watchSamplerBusy || this.pending.size > 0) {
+      this.scheduleWatchSample(1)
+      return
+    }
+
+    this.watchSamplerBusy = true
+    const targetIntervalMs = 1000 / this.state.watchSampling.targetHz
+    const startedAt = performance.now()
+
+    try {
+      const payload = await this.sendCommand(`-data-evaluate-expression ${quoteMiString(expression)}`)
+      const value = asString(payload.value) ?? ''
+      const numericValue = parseWatchNumericValue(value)
+      const sampleTimestamp = Date.now()
+
+      this.updateWatchValue(expression, value)
+      this.state.watchSampling.sampleCount += 1
+      this.state.watchSampling.lastSampleAt = sampleTimestamp
+      this.state.watchSampling.lastValue = value
+      this.state.watchSampling.lastNumericValue = numericValue
+      this.state.watchSampling.lastError = numericValue === null ? '当前值不是纯数字，示波器无法绘制曲线' : null
+      this.recordWatchSampleRate(sampleTimestamp)
+
+      if (numericValue !== null) {
+        this.watchSampleBuffer.push({
+          timestamp: sampleTimestamp,
+          value: numericValue,
+        })
+      }
+
+      if (
+        this.watchSampleBuffer.length >= WATCH_SAMPLE_BATCH_SIZE ||
+        sampleTimestamp - this.lastWatchBatchEmitAt >= WATCH_SAMPLE_BATCH_INTERVAL_MS
+      ) {
+        this.flushWatchSamples()
+      }
+
+      this.queueStateEmit()
+    } catch (error) {
+      const message = (error as Error).message
+      this.updateWatchValue(expression, '', message)
+      this.state.watchSampling.lastError = message
+      this.queueStateEmit(0)
+    } finally {
+      this.watchSamplerBusy = false
+
+      if (!this.state.watchSampling.enabled || this.state.watchSampling.expression !== expression) {
+        return
+      }
+
+      const elapsedMs = performance.now() - startedAt
+      this.syncWatchSamplingState()
+
+      if (this.state.watchSampling.active) {
+        this.scheduleWatchSample(Math.max(0, targetIntervalMs - elapsedMs))
+      }
+    }
+  }
+
   private resetTransientState() {
     this.state.connected = false
     this.state.running = false
@@ -110,6 +385,7 @@ export class DebugSession {
       value: '',
       error: 'Disconnected',
     }))
+    this.resetWatchSamplingRuntime(this.state.watchSampling.enabled ? '调试器未连接' : null)
   }
 
   getState() {
@@ -299,6 +575,7 @@ export class DebugSession {
     if (record.outputType === 'exec' && record.className === 'running') {
       this.state.running = true
       this.state.status = 'running'
+      this.syncWatchSamplingState()
       this.emitState()
       return
     }
@@ -309,6 +586,7 @@ export class DebugSession {
       this.state.lastStopReason = asString(payload.reason) ?? 'stopped'
       const frame = this.mapFrame(payload.frame)
       this.state.currentFrame = frame
+      this.pauseWatchSampling(null)
       this.emitState()
       void this.refreshStopContext()
       return
@@ -369,6 +647,7 @@ export class DebugSession {
 
   private async refreshStopContext() {
     await Promise.allSettled([this.refreshStack(false), this.refreshWatches(false)])
+    this.syncWatchSamplingState()
     this.emitState()
   }
 
@@ -426,6 +705,7 @@ export class DebugSession {
         value: '',
         error: 'Disconnected',
       }))
+      this.syncWatchSamplingState()
 
       if (emitState) {
         this.emitState()
@@ -453,6 +733,18 @@ export class DebugSession {
     }
 
     this.state.watches = watches
+
+    if (this.state.watchSampling.expression) {
+      const sampledWatch = watches.find((entry) => entry.expression === this.state.watchSampling.expression)
+
+      if (sampledWatch) {
+        this.state.watchSampling.lastValue = sampledWatch.value
+        this.state.watchSampling.lastNumericValue = parseWatchNumericValue(sampledWatch.value)
+        this.state.watchSampling.lastError = sampledWatch.error ?? this.state.watchSampling.lastError
+      }
+    }
+
+    this.syncWatchSamplingState()
 
     if (emitState) {
       this.emitState()
@@ -495,6 +787,7 @@ export class DebugSession {
     await this.refreshWatches(false)
 
     this.state.status = 'halted'
+    this.syncWatchSamplingState()
     this.emitState()
 
     if (request.runToMain) {
@@ -562,6 +855,7 @@ export class DebugSession {
 
   async stop() {
     this.rejectPendingCommands('Debug session stopped.')
+    this.resetWatchSamplingRuntime(this.state.watchSampling.enabled ? '调试会话已停止' : null)
 
     if (this.gdbProcess) {
       try {
@@ -618,6 +912,7 @@ export class DebugSession {
     await this.refreshStack(false)
     await this.refreshWatches(false)
     this.state.status = 'halted'
+    this.syncWatchSamplingState()
     this.emitState()
     return this.getState()
   }
@@ -724,7 +1019,27 @@ export class DebugSession {
 
   async setWatchExpressions(expressions: string[]) {
     this.watchExpressions = [...new Set(expressions.map((expression) => expression.trim()).filter(Boolean))]
+
+    if (this.state.watchSampling.expression && !this.watchExpressions.includes(this.state.watchSampling.expression)) {
+      this.state.watchSampling.enabled = false
+      this.state.watchSampling.expression = null
+      this.resetWatchSamplingRuntime('采样变量已被移除')
+    }
+
     return await this.refreshWatches()
+  }
+
+  async configureWatchSampling(request: WatchSamplingRequest) {
+    const nextExpression = request.expression?.trim() || null
+
+    this.state.watchSampling.enabled = request.enabled && Boolean(nextExpression)
+    this.state.watchSampling.expression = nextExpression
+    this.state.watchSampling.targetHz = clampWatchSamplingHz(request.targetHz)
+    this.state.watchSampling.maxTargetHz = MAX_WATCH_SAMPLING_HZ
+    this.resetWatchSamplingRuntime(this.state.watchSampling.enabled ? '等待目标停住后开始采样' : null)
+    this.syncWatchSamplingState()
+    this.emitState()
+    return this.getState()
   }
 
   async setVariable(expression: string, value: string) {

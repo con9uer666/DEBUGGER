@@ -17,6 +17,7 @@ import {
   type ProjectProfile,
   type ProjectScanResult,
   type StackFrame,
+  type WatchSample,
   type WatchValue,
 } from './shared/contracts'
 
@@ -42,6 +43,157 @@ const emptyEnvironmentCheck: EnvironmentCheckResult = {
   checkedAt: '',
   ready: false,
   tools: [],
+}
+
+const MAX_SCOPE_POINTS = 600
+const SCOPE_WIDTH = 760
+const SCOPE_HEIGHT = 240
+
+function clampSamplingHz(value: number) {
+  const normalized = Number.isFinite(value) ? Math.round(value) : 1000
+  return Math.min(1000, Math.max(1, normalized))
+}
+
+function formatFrequency(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 Hz'
+  }
+
+  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} Hz`
+}
+
+function formatNumericValue(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return '-'
+  }
+
+  if (Math.abs(value) >= 1000 || (Math.abs(value) > 0 && Math.abs(value) < 0.01)) {
+    return value.toExponential(2)
+  }
+
+  return value.toFixed(3).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
+}
+
+function formatSampleAge(timestamp: number | null) {
+  if (!timestamp) {
+    return '无样本'
+  }
+
+  const ageMs = Math.max(0, Date.now() - timestamp)
+
+  if (ageMs < 1000) {
+    return `${Math.round(ageMs)} ms 前`
+  }
+
+  return `${(ageMs / 1000).toFixed(1)} s 前`
+}
+
+interface WatchOscilloscopeProps {
+  expression: string | null
+  samples: WatchSample[]
+  active: boolean
+  lastNumericValue: number | null
+  lastError: string | null
+}
+
+function WatchOscilloscope({ expression, samples, active, lastNumericValue, lastError }: WatchOscilloscopeProps) {
+  const geometry = useMemo(() => {
+    const paddingX = 22
+    const paddingY = 18
+    const plotWidth = SCOPE_WIDTH - paddingX * 2
+    const plotHeight = SCOPE_HEIGHT - paddingY * 2
+
+    if (samples.length < 2) {
+      return {
+        points: '',
+        minValue: null,
+        maxValue: null,
+        durationMs: 0,
+        lastPoint: null as { x: number; y: number } | null,
+        paddingX,
+        paddingY,
+        plotWidth,
+        plotHeight,
+      }
+    }
+
+    const firstTimestamp = samples[0].timestamp
+    const lastTimestamp = samples[samples.length - 1].timestamp
+    const durationMs = Math.max(1, lastTimestamp - firstTimestamp)
+    const values = samples.map((sample) => sample.value)
+    const minValue = Math.min(...values)
+    const maxValue = Math.max(...values)
+    const span = maxValue - minValue || Math.max(Math.abs(maxValue), 1)
+    const paddedMin = minValue - span * 0.12
+    const paddedMax = maxValue + span * 0.12
+    const paddedSpan = paddedMax - paddedMin || 1
+
+    const points = samples
+      .map((sample) => {
+        const x = paddingX + ((sample.timestamp - firstTimestamp) / durationMs) * plotWidth
+        const normalized = (sample.value - paddedMin) / paddedSpan
+        const y = SCOPE_HEIGHT - paddingY - normalized * plotHeight
+        return `${x.toFixed(2)},${y.toFixed(2)}`
+      })
+      .join(' ')
+
+    const lastSample = samples[samples.length - 1]
+    const lastX = paddingX + ((lastSample.timestamp - firstTimestamp) / durationMs) * plotWidth
+    const lastNormalized = (lastSample.value - paddedMin) / paddedSpan
+    const lastY = SCOPE_HEIGHT - paddingY - lastNormalized * plotHeight
+
+    return {
+      points,
+      minValue,
+      maxValue,
+      durationMs,
+      lastPoint: { x: lastX, y: lastY },
+      paddingX,
+      paddingY,
+      plotWidth,
+      plotHeight,
+    }
+  }, [samples])
+
+  if (!expression) {
+    return <div className="scope-empty">先从监视列表中选择一个变量，再开启示波采样。</div>
+  }
+
+  if (samples.length < 2 || !geometry.points) {
+    return (
+      <div className="scope-empty">
+        <strong>{expression}</strong>
+        <span>{lastError ?? (active ? '正在等待数值样本...' : '示波器待命中，点击“开始示波”即可采样。')}</span>
+        <small>当前数值 {formatNumericValue(lastNumericValue)}</small>
+      </div>
+    )
+  }
+
+  return (
+    <div className="scope-stage">
+      <div className="scope-axis-label top">MAX {formatNumericValue(geometry.maxValue)}</div>
+      <div className="scope-axis-label bottom">MIN {formatNumericValue(geometry.minValue)}</div>
+      <svg className="scope-canvas" viewBox={`0 0 ${SCOPE_WIDTH} ${SCOPE_HEIGHT}`} preserveAspectRatio="none">
+        {Array.from({ length: 5 }, (_, index) => {
+          const y = geometry.paddingY + (geometry.plotHeight / 4) * index
+
+          return <line key={`h-${index}`} className="scope-grid-line" x1={geometry.paddingX} y1={y} x2={SCOPE_WIDTH - geometry.paddingX} y2={y} />
+        })}
+        {Array.from({ length: 6 }, (_, index) => {
+          const x = geometry.paddingX + (geometry.plotWidth / 5) * index
+
+          return <line key={`v-${index}`} className="scope-grid-line" x1={x} y1={geometry.paddingY} x2={x} y2={SCOPE_HEIGHT - geometry.paddingY} />
+        })}
+        <polyline className="scope-trace" points={geometry.points} />
+        {geometry.lastPoint ? <circle className="scope-trace-dot" cx={geometry.lastPoint.x} cy={geometry.lastPoint.y} r="4" /> : null}
+      </svg>
+      <div className="scope-footer">
+        <span>{expression}</span>
+        <span>窗口 {Math.round(geometry.durationMs)} ms</span>
+        <span>最新值 {formatNumericValue(lastNumericValue)}</span>
+      </div>
+    </div>
+  )
 }
 
 function createLogText(logs: LogEvent[]) {
@@ -92,6 +244,8 @@ function App() {
   const [watchDraft, setWatchDraft] = useState('')
   const [variableValueDraft, setVariableValueDraft] = useState('')
   const [selectedWatch, setSelectedWatch] = useState('')
+  const [scopeSamples, setScopeSamples] = useState<WatchSample[]>([])
+  const [samplingTargetHz, setSamplingTargetHz] = useState(1000)
   const [statusText, setStatusText] = useState('Ready')
   const [isBusy, setIsBusy] = useState(false)
   const [editorReady, setEditorReady] = useState(false)
@@ -99,6 +253,7 @@ function App() {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationIdsRef = useRef<string[]>([])
+  const samplingExpressionRef = useRef<string | null>(null)
 
   const breakpointMap = useMemo(() => mapBreakpointsByFile(debugState), [debugState])
   const buildLogText = useMemo(() => createLogText(buildLogs), [buildLogs])
@@ -139,14 +294,28 @@ function App() {
       setDebugLogs((current) => [...current, event].slice(-500))
     })
     const offState = window.stm32Debug.onDebugState((state) => {
+      if (samplingExpressionRef.current !== state.watchSampling.expression) {
+        samplingExpressionRef.current = state.watchSampling.expression
+        setScopeSamples([])
+      }
+
       setDebugState(state)
+      setSamplingTargetHz(state.watchSampling.targetHz)
       setStatusText(`${state.status} | ${formatFrame(state.currentFrame)}`)
+    })
+    const offSamples = window.stm32Debug.onWatchSamples((batch) => {
+      if (samplingExpressionRef.current !== batch.expression) {
+        return
+      }
+
+      setScopeSamples((current) => [...current, ...batch.samples].slice(-MAX_SCOPE_POINTS))
     })
 
     return () => {
       offBuild()
       offDebug()
       offState()
+      offSamples()
     }
   }, [])
 
@@ -389,6 +558,29 @@ function App() {
     setDebugState(state)
   }
 
+  async function configureWatchSampling(enabled: boolean) {
+    const expression = enabled ? selectedWatch : null
+
+    if (enabled && !expression) {
+      setStatusText('请先选择一个监视变量，再开启示波。')
+      return
+    }
+
+    await withBusyState(enabled ? `开启 ${expression} 示波采样` : '停止示波采样', async () => {
+      const state = await window.stm32Debug.configureWatchSampling({
+        expression,
+        enabled,
+        targetHz: samplingTargetHz,
+      })
+      setDebugState(state)
+      setStatusText(
+        enabled
+          ? `示波器已连接到 ${expression}，目标频率 ${formatFrequency(state.watchSampling.targetHz)}`
+          : '示波采样已停止',
+      )
+    })
+  }
+
   async function removeWatch(expression: string) {
     if (!expression) {
       return
@@ -420,6 +612,14 @@ function App() {
 
   function renderWatchRow(entry: WatchValue) {
     const isSelected = selectedWatch === entry.expression
+    const isScoped = debugState.watchSampling.expression === entry.expression
+    const hintText = entry.error
+      ? '读取失败'
+      : isScoped
+        ? debugState.watchSampling.active
+          ? '示波采样中'
+          : '示波已挂起'
+        : '点击后可编辑或挂到示波器'
 
     return (
       <button
@@ -430,11 +630,21 @@ function App() {
           setVariableValueDraft(entry.value)
         }}
       >
-        <span>{entry.expression}</span>
+        <div className="watch-row-topline">
+          <span>{entry.expression}</span>
+          {isScoped ? <small className="scope-chip">Scope</small> : null}
+        </div>
         <strong>{entry.error ? `ERR: ${entry.error}` : entry.value || '-'}</strong>
+        <small>{hintText}</small>
       </button>
     )
   }
+
+  const scopeModeLabel = debugState.watchSampling.active
+    ? 'Live'
+    : debugState.watchSampling.enabled
+      ? 'Armed'
+      : 'Idle'
 
   return (
     <div className="workbench-shell">
@@ -708,6 +918,114 @@ function App() {
         <aside className="right-panel panel">
           <section className="panel-section">
             <div className="panel-header">
+              <div>
+                <h3>Watch + Scope</h3>
+                <span>连续采样与变量修改集中在这一栏</span>
+              </div>
+              <div className="watch-badge-group">
+                <span className={debugState.watchSampling.active ? 'watch-badge live' : 'watch-badge'}>{scopeModeLabel}</span>
+                <span className="watch-badge accent">{formatFrequency(debugState.watchSampling.achievedHz)}</span>
+              </div>
+            </div>
+            <div className="watch-metrics-grid">
+              <article className="metric-card">
+                <span>Scope Channel</span>
+                <strong>{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</strong>
+                <small>从监视列表中点选一个变量后开启示波</small>
+              </article>
+              <article className="metric-card">
+                <span>当前频率</span>
+                <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
+                <small>实时按最近 1 秒样本数统计</small>
+              </article>
+              <article className="metric-card">
+                <span>目标频率</span>
+                <strong>{formatFrequency(debugState.watchSampling.targetHz)}</strong>
+                <small>当前实现上限 1000 Hz</small>
+              </article>
+              <article className="metric-card">
+                <span>最近样本</span>
+                <strong>{formatSampleAge(debugState.watchSampling.lastSampleAt)}</strong>
+                <small>最新数值 {debugState.watchSampling.lastValue || '-'}</small>
+              </article>
+            </div>
+            <div className="watch-toolbar">
+              <div className="watch-composer">
+                <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="globalCounter" />
+                <button onClick={() => void addWatchExpression()}>Add</button>
+                <button onClick={() => void refreshWatchValues()}>Refresh</button>
+              </div>
+              <div className="sampling-controls">
+                <label>
+                  <span>Scope Hz</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={samplingTargetHz}
+                    onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
+                  />
+                </label>
+                <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
+                  Start Scope
+                </button>
+                <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
+                  Stop Scope
+                </button>
+              </div>
+            </div>
+            <div className="watch-workspace">
+              <div className="watch-column">
+                <div className="watch-list">
+                  {debugState.watches.length > 0 ? (
+                    debugState.watches.map((entry) => renderWatchRow(entry))
+                  ) : (
+                    <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击 Add。</div>
+                  )}
+                </div>
+                <div className="watch-edit-box">
+                  <label>
+                    <span>Selected Watch</span>
+                    <input value={selectedWatch} readOnly />
+                  </label>
+                  <label>
+                    <span>New Value</span>
+                    <input value={variableValueDraft} onChange={(event) => setVariableValueDraft(event.target.value)} />
+                  </label>
+                  <div className="action-grid single-row">
+                    <button onClick={() => void applyVariableValue()} disabled={!selectedWatch || isBusy}>
+                      Write Variable
+                    </button>
+                    <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
+                      Remove Watch
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="scope-card">
+                <div className="scope-header">
+                  <div>
+                    <h4>示波器</h4>
+                    <span>{debugState.watchSampling.expression ?? '未挂载变量'}</span>
+                  </div>
+                  <div className="scope-meta">
+                    <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
+                    <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
+                  </div>
+                </div>
+                <WatchOscilloscope
+                  expression={debugState.watchSampling.expression}
+                  samples={scopeSamples}
+                  active={debugState.watchSampling.active}
+                  lastNumericValue={debugState.watchSampling.lastNumericValue}
+                  lastError={debugState.watchSampling.lastError}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className="panel-section">
+            <div className="panel-header">
               <h3>Call Stack</h3>
               <span>{debugState.lastStopReason ?? 'idle'}</span>
             </div>
@@ -733,37 +1051,6 @@ function App() {
                   <span>{frame.file ? `${frame.file}:${frame.line ?? '-'}` : frame.address ?? 'unknown'}</span>
                 </button>
               ))}
-            </div>
-          </section>
-
-          <section className="panel-section">
-            <div className="panel-header">
-              <h3>Watch</h3>
-              <span>{debugState.watches.length} items</span>
-            </div>
-            <div className="watch-composer">
-              <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="globalCounter" />
-              <button onClick={() => void addWatchExpression()}>Add</button>
-              <button onClick={() => void refreshWatchValues()}>Refresh</button>
-            </div>
-            <div className="watch-list">{debugState.watches.map((entry) => renderWatchRow(entry))}</div>
-            <div className="watch-edit-box">
-              <label>
-                <span>Selected Watch</span>
-                <input value={selectedWatch} readOnly />
-              </label>
-              <label>
-                <span>New Value</span>
-                <input value={variableValueDraft} onChange={(event) => setVariableValueDraft(event.target.value)} />
-              </label>
-              <div className="action-grid single-row">
-                <button onClick={() => void applyVariableValue()} disabled={!selectedWatch || isBusy}>
-                  Write Variable
-                </button>
-                <button onClick={() => void removeWatch(selectedWatch)} disabled={!selectedWatch || isBusy}>
-                  Remove Watch
-                </button>
-              </div>
             </div>
           </section>
 

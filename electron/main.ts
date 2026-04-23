@@ -168,6 +168,10 @@ app.whenReady().then(async () => {
     return await debugSession.setWatchExpressions(expressions)
   })
 
+  ipcMain.handle('debug:configureWatchSampling', async (_event, request) => {
+    return await debugSession.configureWatchSampling(request)
+  })
+
   ipcMain.handle('debug:refreshWatches', async () => {
     return await debugSession.refreshWatches()
   })

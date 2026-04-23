@@ -92,6 +92,38 @@ export interface WatchValue {
   error?: string
 }
 
+export interface WatchSample {
+  timestamp: number
+  value: number
+}
+
+export interface WatchSampleBatch {
+  expression: string
+  samples: WatchSample[]
+  targetHz: number
+  achievedHz: number
+}
+
+export interface WatchSamplingRequest {
+  expression: string | null
+  enabled: boolean
+  targetHz: number
+}
+
+export interface WatchSamplingStatus {
+  enabled: boolean
+  active: boolean
+  expression: string | null
+  targetHz: number
+  achievedHz: number
+  maxTargetHz: number
+  sampleCount: number
+  lastSampleAt: number | null
+  lastValue: string
+  lastNumericValue: number | null
+  lastError: string | null
+}
+
 export interface DebugSessionState {
   connected: boolean
   running: boolean
@@ -100,6 +132,7 @@ export interface DebugSessionState {
   stack: StackFrame[]
   breakpoints: DebugBreakpoint[]
   watches: WatchValue[]
+  watchSampling: WatchSamplingStatus
   lastStopReason: string | null
 }
 
@@ -159,11 +192,13 @@ export interface Stm32DebugApi {
   sendDebugControl(command: DebugControlCommand): Promise<DebugSessionState>
   setBreakpoints(filePath: string, lines: number[]): Promise<DebugSessionState>
   setWatchExpressions(expressions: string[]): Promise<DebugSessionState>
+  configureWatchSampling(request: WatchSamplingRequest): Promise<DebugSessionState>
   refreshWatches(): Promise<DebugSessionState>
   setVariable(expression: string, value: string): Promise<DebugSessionState>
   onBuildLog(listener: (event: LogEvent) => void): () => void
   onDebugLog(listener: (event: LogEvent) => void): () => void
   onDebugState(listener: (state: DebugSessionState) => void): () => void
+  onWatchSamples(listener: (batch: WatchSampleBatch) => void): () => void
 }
 
 export const defaultProjectProfile: ProjectProfile = {
@@ -193,5 +228,18 @@ export const emptyDebugSessionState: DebugSessionState = {
   stack: [],
   breakpoints: [],
   watches: [],
+  watchSampling: {
+    enabled: false,
+    active: false,
+    expression: null,
+    targetHz: 1000,
+    achievedHz: 0,
+    maxTargetHz: 1000,
+    sampleCount: 0,
+    lastSampleAt: null,
+    lastValue: '',
+    lastNumericValue: null,
+    lastError: null,
+  },
   lastStopReason: null,
 }
