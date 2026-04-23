@@ -5,6 +5,7 @@ import path from 'node:path'
 import {
   emptyDebugSessionState,
   type CommandResult,
+  type DebugTargetPreset,
   type DebugBreakpoint,
   type DebugControlCommand,
   type DebuggerPreset,
@@ -83,14 +84,27 @@ const debuggerPresetConfigs: Record<Exclude<DebuggerPreset, 'custom'>, string[]>
   jlink: ['interface/jlink.cfg'],
 }
 
-function composeOpenOcdConfigEntries(request: Pick<StartDebugRequest, 'debuggerPreset' | 'openOcdConfig'>) {
+const debugTargetPresetConfigs: Record<Exclude<DebugTargetPreset, 'custom'>, string[]> = {
+  'target-stm32f0x': ['target/stm32f0x.cfg'],
+  'target-stm32f1x': ['target/stm32f1x.cfg'],
+  'target-stm32f3x': ['target/stm32f3x.cfg'],
+  'target-stm32f4x': ['target/stm32f4x.cfg'],
+  'target-stm32f7x': ['target/stm32f7x.cfg'],
+  'target-stm32g0x': ['target/stm32g0x.cfg'],
+  'target-stm32g4x': ['target/stm32g4x.cfg'],
+  'target-stm32h7x': ['target/stm32h7x.cfg'],
+  'target-stm32l0': ['target/stm32l0.cfg'],
+  'target-stm32l4x': ['target/stm32l4x.cfg'],
+  'board-st-nucleo-f4': ['board/st_nucleo_f4.cfg'],
+  'board-stm32f4discovery': ['board/stm32f4discovery.cfg'],
+}
+
+function composeOpenOcdConfigEntries(request: Pick<StartDebugRequest, 'debuggerPreset' | 'debugTargetPreset' | 'openOcdConfig'>) {
   const userConfig = splitOpenOcdConfig(request.openOcdConfig)
+  const interfaceConfig = request.debuggerPreset === 'custom' ? [] : debuggerPresetConfigs[request.debuggerPreset]
+  const targetConfig = request.debugTargetPreset === 'custom' ? [] : debugTargetPresetConfigs[request.debugTargetPreset]
 
-  if (request.debuggerPreset === 'custom') {
-    return userConfig
-  }
-
-  return [...debuggerPresetConfigs[request.debuggerPreset], ...userConfig]
+  return [...interfaceConfig, ...targetConfig, ...userConfig]
 }
 
 function quoteMiString(value: string) {
@@ -921,8 +935,8 @@ export class DebugSession {
       throw new Error('ELF file is required.')
     }
 
-    if (request.debuggerPreset !== 'custom' && !request.openOcdConfig.trim()) {
-      throw new Error('请补充目标板的 OpenOCD 配置，例如 target/stm32f4x.cfg 或 board/st_nucleo_f4.cfg。')
+    if (request.debuggerPreset !== 'custom' && request.debugTargetPreset === 'custom' && !request.openOcdConfig.trim()) {
+      throw new Error('请先选择目标芯片/板卡，或手动补充 target/board OpenOCD 配置。')
     }
 
     if (composeOpenOcdConfigEntries(request).length === 0) {

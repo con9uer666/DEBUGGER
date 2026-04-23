@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type {
+  DebugTargetPreset,
   DebuggerPreset,
   OpenFileResult,
   ProjectFileEntry,
@@ -121,14 +122,27 @@ const debuggerPresetConfigs: Record<Exclude<DebuggerPreset, 'custom'>, string[]>
   jlink: ['interface/jlink.cfg'],
 }
 
-function composeOpenOcdConfig(profile: Pick<ProjectProfile, 'debuggerPreset' | 'openOcdConfig'>) {
+const debugTargetPresetConfigs: Record<Exclude<DebugTargetPreset, 'custom'>, string[]> = {
+  'target-stm32f0x': ['target/stm32f0x.cfg'],
+  'target-stm32f1x': ['target/stm32f1x.cfg'],
+  'target-stm32f3x': ['target/stm32f3x.cfg'],
+  'target-stm32f4x': ['target/stm32f4x.cfg'],
+  'target-stm32f7x': ['target/stm32f7x.cfg'],
+  'target-stm32g0x': ['target/stm32g0x.cfg'],
+  'target-stm32g4x': ['target/stm32g4x.cfg'],
+  'target-stm32h7x': ['target/stm32h7x.cfg'],
+  'target-stm32l0': ['target/stm32l0.cfg'],
+  'target-stm32l4x': ['target/stm32l4x.cfg'],
+  'board-st-nucleo-f4': ['board/st_nucleo_f4.cfg'],
+  'board-stm32f4discovery': ['board/stm32f4discovery.cfg'],
+}
+
+function composeOpenOcdConfig(profile: Pick<ProjectProfile, 'debuggerPreset' | 'debugTargetPreset' | 'openOcdConfig'>) {
   const userConfig = splitOpenOcdConfig(profile.openOcdConfig)
+  const interfaceConfig = profile.debuggerPreset === 'custom' ? [] : debuggerPresetConfigs[profile.debuggerPreset]
+  const targetConfig = profile.debugTargetPreset === 'custom' ? [] : debugTargetPresetConfigs[profile.debugTargetPreset]
 
-  if (profile.debuggerPreset === 'custom') {
-    return userConfig
-  }
-
-  return [...debuggerPresetConfigs[profile.debuggerPreset], ...userConfig]
+  return [...interfaceConfig, ...targetConfig, ...userConfig]
 }
 
 export async function generateVsCodeFiles(profile: ProjectProfile) {
