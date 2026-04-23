@@ -24,6 +24,7 @@ import {
 type ActiveTab = 'editor' | 'memory' | 'registers' | 'logs'
 type LeftPanelView = 'project' | 'files'
 type RightPanelView = 'watch' | 'session'
+type WatchPanelView = 'variables' | 'scope' | 'stats'
 type IconName =
   | 'folder'
   | 'refresh'
@@ -479,6 +480,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('editor')
   const [leftPanelView, setLeftPanelView] = useState<LeftPanelView>('project')
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>('watch')
+  const [watchPanelView, setWatchPanelView] = useState<WatchPanelView>('variables')
   const [debugState, setDebugState] = useState<DebugSessionState>(emptyDebugSessionState)
   const [buildLogs, setBuildLogs] = useState<LogEvent[]>([])
   const [debugLogs, setDebugLogs] = useState<LogEvent[]>([])
@@ -734,6 +736,7 @@ function App() {
       const state = await window.stm32Debug.startDebugSession(profile)
       setDebugState(state)
       setRightPanelView('watch')
+      setWatchPanelView('scope')
       setStatusText(`已连接调试器 | ${formatFrame(state.currentFrame)}`)
     })
   }
@@ -806,6 +809,7 @@ function App() {
     const state = await window.stm32Debug.setWatchExpressions(nextExpressions)
     setDebugState(state)
     setRightPanelView('watch')
+    setWatchPanelView('variables')
     setWatchDraft('')
   }
 
@@ -831,6 +835,7 @@ function App() {
       })
       setDebugState(state)
       setRightPanelView('watch')
+      setWatchPanelView(enabled ? 'scope' : 'stats')
       setStatusText(
         enabled
           ? `示波器已连接到 ${expression}，目标频率 ${formatFrequency(state.watchSampling.targetHz)}`
@@ -865,6 +870,7 @@ function App() {
       const state = await window.stm32Debug.setVariable(selectedWatch, variableValueDraft.trim())
       setDebugState(state)
       setRightPanelView('watch')
+      setWatchPanelView('variables')
       setStatusText(`已写入变量 ${selectedWatch}`)
     })
   }
@@ -887,11 +893,12 @@ function App() {
         onClick={() => {
           setSelectedWatch(entry.expression)
           setVariableValueDraft(entry.value)
+          setWatchPanelView('variables')
         }}
       >
         <div className="watch-row-topline">
           <span>{entry.expression}</span>
-          {isScoped ? <small className="scope-chip">Scope</small> : null}
+          {isScoped ? <small className="scope-chip">示波</small> : null}
         </div>
         <strong>{entry.error ? `ERR: ${entry.error}` : entry.value || '-'}</strong>
         <small>{hintText}</small>
@@ -1019,6 +1026,31 @@ function App() {
                 </div>
               </label>
 
+              <div className="primary-action-strip compact-actions">
+                <button onClick={() => void configureProject()} disabled={isBusy || !profile.projectRoot}>
+                  <ButtonLabel icon="tool" text="配置工程" />
+                </button>
+                <button onClick={() => void buildProject()} disabled={isBusy || !profile.projectRoot}>
+                  <ButtonLabel icon="refresh" text="编译工程" />
+                </button>
+                <button onClick={() => void startDebugSession()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
+                  <ButtonLabel icon="play" text="开始调试" />
+                </button>
+                <details className="action-menu">
+                  <summary>
+                    <ButtonLabel icon="more" text="更多操作" />
+                  </summary>
+                  <div className="action-menu-list">
+                    <button onClick={() => void programDevice()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
+                      <ButtonLabel icon="download" text="下载程序" />
+                    </button>
+                    <button onClick={() => void stopDebugSession()} disabled={isBusy || !debugState.connected}>
+                      <ButtonLabel icon="stop" text="停止调试" />
+                    </button>
+                  </div>
+                </details>
+              </div>
+
               <details className="collapse-card">
                 <summary>
                   <ButtonLabel icon="tool" text="高级调试参数" />
@@ -1060,31 +1092,6 @@ function App() {
                   </div>
                 </div>
               </details>
-
-              <div className="primary-action-strip">
-                <button onClick={() => void configureProject()} disabled={isBusy || !profile.projectRoot}>
-                  <ButtonLabel icon="tool" text="配置工程" />
-                </button>
-                <button onClick={() => void buildProject()} disabled={isBusy || !profile.projectRoot}>
-                  <ButtonLabel icon="refresh" text="编译工程" />
-                </button>
-                <button onClick={() => void startDebugSession()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
-                  <ButtonLabel icon="play" text="开始调试" />
-                </button>
-                <details className="action-menu">
-                  <summary>
-                    <ButtonLabel icon="more" text="更多操作" />
-                  </summary>
-                  <div className="action-menu-list">
-                    <button onClick={() => void programDevice()} disabled={isBusy || !profile.projectRoot || !profile.elfFile}>
-                      <ButtonLabel icon="download" text="下载程序" />
-                    </button>
-                    <button onClick={() => void stopDebugSession()} disabled={isBusy || !debugState.connected}>
-                      <ButtonLabel icon="stop" text="停止调试" />
-                    </button>
-                  </div>
-                </details>
-              </div>
 
               <details className="collapse-card subtle">
                 <summary>
@@ -1245,74 +1252,59 @@ function App() {
               <div className="panel-header">
                 <div>
                   <h3>监视与示波</h3>
-                  <span>变量编辑、示波器和频率统计集中在这里</span>
+                  <span>变量操作、示波器和统计信息按页签拆开，避免内容互相遮挡</span>
                 </div>
                 <div className="watch-badge-group">
                   <span className={debugState.watchSampling.active ? 'watch-badge live' : 'watch-badge'}>{scopeModeLabel}</span>
                   <span className="watch-badge accent">{formatFrequency(debugState.watchSampling.achievedHz)}</span>
                 </div>
               </div>
-              <div className="watch-metrics-grid">
-                <article className="metric-card">
-                  <span>示波通道</span>
-                  <strong>{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</strong>
-                  <small>先选中变量，再开启示波</small>
-                </article>
-                <article className="metric-card">
-                  <span>当前频率</span>
-                  <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
-                  <small>按最近 1 秒样本数实时统计</small>
-                </article>
-                <article className="metric-card">
-                  <span>目标频率</span>
-                  <strong>{formatFrequency(debugState.watchSampling.targetHz)}</strong>
-                  <small>当前实现上限 1000 Hz</small>
-                </article>
-                <article className="metric-card">
-                  <span>最近样本</span>
-                  <strong>{formatSampleAge(debugState.watchSampling.lastSampleAt)}</strong>
-                  <small>最新值 {debugState.watchSampling.lastValue || '-'}</small>
-                </article>
+              <div className="watch-summary-row">
+                <span className="watch-summary-pill">当前变量：{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</span>
+                <span className="watch-summary-pill">当前频率：{formatFrequency(debugState.watchSampling.achievedHz)}</span>
+                <span className="watch-summary-pill">目标频率：{formatFrequency(debugState.watchSampling.targetHz)}</span>
               </div>
-              <div className="watch-toolbar">
-                <div className="watch-composer">
-                  <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="输入变量或表达式" />
-                  <button onClick={() => void addWatchExpression()}>
-                    <ButtonLabel icon="plus" text="添加" />
-                  </button>
-                  <button onClick={() => void refreshWatchValues()}>
-                    <ButtonLabel icon="refresh" text="刷新" />
-                  </button>
-                </div>
-                <div className="sampling-controls">
-                  <label>
-                    <span>示波频率</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={1000}
-                      value={samplingTargetHz}
-                      onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
-                    />
-                  </label>
-                  <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
-                    <ButtonLabel icon="wave" text="开始示波" />
-                  </button>
-                  <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
-                    <ButtonLabel icon="stop" text="停止示波" />
-                  </button>
-                </div>
+              <div className="mini-tab-strip">
+                <button className={watchPanelView === 'variables' ? 'active' : ''} onClick={() => setWatchPanelView('variables')}>
+                  变量
+                </button>
+                <button className={watchPanelView === 'scope' ? 'active' : ''} onClick={() => setWatchPanelView('scope')}>
+                  示波器
+                </button>
+                <button className={watchPanelView === 'stats' ? 'active' : ''} onClick={() => setWatchPanelView('stats')}>
+                  统计
+                </button>
               </div>
-              <div className="watch-workspace">
-                <div className="watch-column">
-                  <div className="watch-list">
-                    {debugState.watches.length > 0 ? (
-                      debugState.watches.map((entry) => renderWatchRow(entry))
-                    ) : (
-                      <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
-                    )}
+
+              {watchPanelView === 'variables' ? (
+                <div className="watch-tab-content">
+                  <div className="watch-composer watch-card">
+                    <input value={watchDraft} onChange={(event) => setWatchDraft(event.target.value)} placeholder="输入变量或表达式" />
+                    <button onClick={() => void addWatchExpression()}>
+                      <ButtonLabel icon="plus" text="添加" />
+                    </button>
+                    <button onClick={() => void refreshWatchValues()}>
+                      <ButtonLabel icon="refresh" text="刷新" />
+                    </button>
                   </div>
-                  <div className="watch-edit-box">
+                  <div className="watch-list-panel watch-card">
+                    <div className="subsection-header">
+                      <strong>监视列表</strong>
+                      <span>{debugState.watches.length} 项</span>
+                    </div>
+                    <div className="watch-list">
+                      {debugState.watches.length > 0 ? (
+                        debugState.watches.map((entry) => renderWatchRow(entry))
+                      ) : (
+                        <div className="empty-list-state">还没有监视变量。先输入一个全局变量名，再点击“添加”。</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="watch-edit-box watch-card">
+                    <div className="subsection-header">
+                      <strong>变量写入</strong>
+                      <span>{selectedWatch || '未选择变量'}</span>
+                    </div>
                     <label>
                       <span>已选变量</span>
                       <input value={selectedWatch} readOnly />
@@ -1331,26 +1323,82 @@ function App() {
                     </div>
                   </div>
                 </div>
-                <div className="scope-card">
-                  <div className="scope-header">
-                    <div>
-                      <h4>示波器</h4>
-                      <span>{debugState.watchSampling.expression ?? '未挂载变量'}</span>
-                    </div>
-                    <div className="scope-meta">
-                      <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
-                      <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
-                    </div>
+              ) : null}
+
+              {watchPanelView === 'scope' ? (
+                <div className="watch-tab-content">
+                  <div className="sampling-controls watch-card">
+                    <label>
+                      <span>示波频率</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        value={samplingTargetHz}
+                        onChange={(event) => setSamplingTargetHz(clampSamplingHz(Number(event.target.value || '1000')))}
+                      />
+                    </label>
+                    <button onClick={() => void configureWatchSampling(true)} disabled={!selectedWatch || isBusy}>
+                      <ButtonLabel icon="wave" text="开始示波" />
+                    </button>
+                    <button onClick={() => void configureWatchSampling(false)} disabled={!debugState.watchSampling.enabled || isBusy}>
+                      <ButtonLabel icon="stop" text="停止示波" />
+                    </button>
                   </div>
-                  <WatchOscilloscope
-                    expression={debugState.watchSampling.expression}
-                    samples={scopeSamples}
-                    active={debugState.watchSampling.active}
-                    lastNumericValue={debugState.watchSampling.lastNumericValue}
-                    lastError={debugState.watchSampling.lastError}
-                  />
+                  <div className="scope-card scope-card-expanded">
+                    <div className="scope-header">
+                      <div>
+                        <h4>示波器</h4>
+                        <span>{debugState.watchSampling.expression ?? '未挂载变量'}</span>
+                      </div>
+                      <div className="scope-meta">
+                        <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
+                        <small>{debugState.watchSampling.lastError ?? '仅绘制可解析为数字的标量变量'}</small>
+                      </div>
+                    </div>
+                    <WatchOscilloscope
+                      expression={debugState.watchSampling.expression}
+                      samples={scopeSamples}
+                      active={debugState.watchSampling.active}
+                      lastNumericValue={debugState.watchSampling.lastNumericValue}
+                      lastError={debugState.watchSampling.lastError}
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : null}
+
+              {watchPanelView === 'stats' ? (
+                <div className="watch-tab-content">
+                  <div className="watch-metrics-grid compact-metrics">
+                    <article className="metric-card">
+                      <span>示波通道</span>
+                      <strong>{debugState.watchSampling.expression ?? selectedWatch ?? '未选择'}</strong>
+                      <small>先选中变量，再开启示波</small>
+                    </article>
+                    <article className="metric-card">
+                      <span>当前频率</span>
+                      <strong>{formatFrequency(debugState.watchSampling.achievedHz)}</strong>
+                      <small>按最近 1 秒样本数实时统计</small>
+                    </article>
+                    <article className="metric-card">
+                      <span>最近样本</span>
+                      <strong>{formatSampleAge(debugState.watchSampling.lastSampleAt)}</strong>
+                      <small>最新值 {debugState.watchSampling.lastValue || '-'}</small>
+                    </article>
+                    <article className="metric-card">
+                      <span>最近数值</span>
+                      <strong>{formatNumericValue(debugState.watchSampling.lastNumericValue)}</strong>
+                      <small>{debugState.watchSampling.lastError ?? '链路稳定时会持续更新'}</small>
+                    </article>
+                  </div>
+                  <div className="watch-card stats-note">
+                    <div className="subsection-header">
+                      <strong>使用建议</strong>
+                    </div>
+                    <p>如果右侧内容较多，先切到“变量”或“示波器”页，只看当前任务需要的控件。这样比把监视、写值、曲线和统计全部堆在一页里更清楚。</p>
+                  </div>
+                </div>
+              ) : null}
             </section>
           ) : (
             <section className="panel-section session-panel">
