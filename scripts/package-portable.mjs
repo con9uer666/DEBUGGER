@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
 function run(command, args) {
@@ -29,6 +29,9 @@ const electronBuilderCommand =
 const releaseDirectory = path.join(workspaceRoot, 'release')
 const unpackedDirectory = path.join(releaseDirectory, 'win-unpacked')
 const portableZipPath = path.join(releaseDirectory, 'STM32-Debug-Studio-win-unpacked.zip')
+const bundledDocsDirectory = path.join(unpackedDirectory, 'docs')
+const tutorialSourcePath = path.join(workspaceRoot, 'docs', '使用教程.md')
+const tutorialTargetPath = path.join(bundledDocsDirectory, '使用教程.md')
 
 rmSync(portableZipPath, { force: true })
 
@@ -43,6 +46,9 @@ const builderStatus = run(electronBuilderCommand, ['--dir', '--win'])
 if (!existsSync(unpackedDirectory)) {
   process.exit(builderStatus || 1)
 }
+
+mkdirSync(bundledDocsDirectory, { recursive: true })
+copyFileSync(tutorialSourcePath, tutorialTargetPath)
 
 const compressionCommand = `Compress-Archive -Path '${unpackedDirectory.replace(/\\/g, '/') }/*' -DestinationPath '${portableZipPath.replace(/\\/g, '/')}' -Force`
 const compressionStatus = run('powershell', ['-NoProfile', '-Command', compressionCommand])

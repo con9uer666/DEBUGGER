@@ -56,7 +56,7 @@ The following host tools were installed or verified during setup:
 - Build a portable test package: `npm.cmd run dist`
 - Build a Windows installer: `npm.cmd run dist:installer`
 
-`npm.cmd run dist` creates a portable zip package under `release/STM32-Debug-Studio-win-unpacked.zip`, which is the easiest artifact to copy to another Windows PC for testing.
+`npm.cmd run dist` creates a portable zip package under `release/STM32-Debug-Studio-win-unpacked.zip`, which is the easiest artifact to copy to another Windows PC for testing. The portable package also includes the Chinese guide at `docs/使用教程.md`.
 
 ## Testing On Another PC
 
@@ -64,15 +64,16 @@ The following host tools were installed or verified during setup:
 2. Copy one of the following to the other Windows PC:
   - `release/STM32-Debug-Studio-win-unpacked.zip`
   - or, if you prefer an installer, generate one with `npm.cmd run dist:installer`
-3. On the other PC, install or provide these host tools:
+3. After extracting the zip, the bundled Chinese guide is available at `docs/使用教程.md`.
+4. On the other PC, install or provide these host tools:
   - CMake
   - OpenOCD
   - Arm GNU Toolchain
   - optionally Ninja if your CMake project uses it
-4. Open your STM32 project in VS Code and build it with CMake so that an ELF file is generated.
-5. Launch STM32 Debug Studio on that PC.
-6. Use `环境自检` to verify the machine can find CMake, OpenOCD, GDB, and GCC.
-7. Select the STM32 project root, set the OpenOCD config and ELF path, then use:
+5. Open your STM32 project in VS Code and build it with CMake so that an ELF file is generated.
+6. Launch STM32 Debug Studio on that PC.
+7. Use `环境自检` to verify the machine can find CMake, OpenOCD, GDB, and GCC.
+8. Select the STM32 project root, set the OpenOCD config and ELF path, then use:
   - `Program Device` to only download firmware to the board
   - `Start Debug` to download and enter the debug session
 
