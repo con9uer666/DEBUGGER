@@ -219,6 +219,18 @@ app.whenReady().then(async () => {
     return await debugSession.setBreakpoints(filePath, lines)
   })
 
+  ipcMain.handle('debug:updateBreakpoint', async (_event, request) => {
+    return await debugSession.updateBreakpoint(request)
+  })
+
+  ipcMain.handle('debug:removeBreakpoint', async (_event, id: string) => {
+    return await debugSession.removeBreakpoint(id)
+  })
+
+  ipcMain.handle('debug:addDataBreakpoint', async (_event, request) => {
+    return await debugSession.addDataBreakpoint(request)
+  })
+
   ipcMain.handle('debug:setWatchExpressions', async (_event, expressions: string[]) => {
     return await debugSession.setWatchExpressions(expressions)
   })
@@ -252,6 +264,17 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', async () => {
-  await debugSession.stop()
+let quitConfirmed = false
+
+app.on('before-quit', (event) => {
+  if (quitConfirmed) {
+    return
+  }
+
+  event.preventDefault()
+
+  void debugSession.stop().finally(() => {
+    quitConfirmed = true
+    app.quit()
+  })
 })

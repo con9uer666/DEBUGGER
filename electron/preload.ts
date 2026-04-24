@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
+  BreakpointUpdateRequest,
+  DataBreakpointRequest,
   DetachedPanelKind,
   DebugControlCommand,
   FileDialogRequest,
@@ -72,6 +74,15 @@ const api: Stm32DebugApi = {
   },
   setBreakpoints(filePath: string, lines: number[]) {
     return ipcRenderer.invoke('debug:setBreakpoints', filePath, lines)
+  },
+  updateBreakpoint(request: BreakpointUpdateRequest) {
+    return ipcRenderer.invoke('debug:updateBreakpoint', request)
+  },
+  removeBreakpoint(id: string) {
+    return ipcRenderer.invoke('debug:removeBreakpoint', id)
+  },
+  addDataBreakpoint(request: DataBreakpointRequest) {
+    return ipcRenderer.invoke('debug:addDataBreakpoint', request)
   },
   setWatchExpressions(expressions: string[]) {
     return ipcRenderer.invoke('debug:setWatchExpressions', expressions)

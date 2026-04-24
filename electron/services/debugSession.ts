@@ -4,7 +4,10 @@ import path from 'node:path'
 
 import {
   emptyDebugSessionState,
+  type BreakpointUpdateRequest,
   type CommandResult,
+  type DataBreakpointAccess,
+  type DataBreakpointRequest,
   type DebugTargetPreset,
   type DebugBreakpoint,
   type DebugControlCommand,
@@ -189,6 +192,7 @@ export class DebugSession {
 
   private gdbProcess: ChildProcessWithoutNullStreams | null = null
   private openOcdProcess: ChildProcessWithoutNullStreams | null = null
+  private openOcdGdbPort = 3333
   private gdbBuffer = ''
   private sequence = 1
   private watchExpressions: string[] = []
@@ -793,16 +797,22 @@ export class DebugSession {
 
   private async startOpenOcd(request: StartDebugRequest) {
     const executable = request.openOcdPath.trim() || 'openocd'
-    const configFiles = composeOpenOcdConfigEntries(request)
+    const interfaceConfig = request.debuggerPreset === 'custom' ? [] : debuggerPresetConfigs[request.debuggerPreset]
+    const targetConfig = request.debugTargetPreset === 'custom' ? [] : debugTargetPresetConfigs[request.debugTargetPreset]
+    const userConfig = splitOpenOcdConfig(request.openOcdConfig)
 
-    if (configFiles.length === 0) {
+    if (interfaceConfig.length === 0 && targetConfig.length === 0 && userConfig.length === 0) {
       throw new Error('OpenOCD config is required.')
     }
 
-    const args = configFiles.flatMap((entry) => [
-      '-f',
-      resolveProjectPath(request.projectRoot, entry, entry),
-    ])
+    // Preset configs are built-in OpenOCD script paths (e.g. interface/cmsis-dap.cfg).
+    // Pass them as-is so OpenOCD resolves them from its own scripts directory.
+    // User-supplied configs may be relative to the project root.
+    const args = [
+      ...interfaceConfig.flatMap((entry) => ['-f', entry]),
+      ...targetConfig.flatMap((entry) => ['-f', entry]),
+      ...userConfig.flatMap((entry) => ['-f', resolveProjectPath(request.projectRoot, entry, entry)]),
+    ]
 
     this.emitLog('openocd', 'info', `Starting OpenOCD: ${executable} ${args.join(' ')}\n`)
 
@@ -813,10 +823,11 @@ export class DebugSession {
       })
 
       this.openOcdProcess = child
+      this.openOcdGdbPort = 3333
       let ready = false
       const timeout = setTimeout(() => {
         if (!ready) {
-          reject(new Error('OpenOCD did not become ready on port 3333.'))
+          reject(new Error('OpenOCD did not become ready for GDB connections within 12s.'))
         }
       }, 12000)
 
@@ -824,7 +835,24 @@ export class DebugSession {
         const text = chunk.toString()
         this.emitLog('openocd', stream, text)
 
-        if (!ready && /port 3333 for gdb connections|accepting 'gdb' connection/i.test(text)) {
+        if (ready) {
+          return
+        }
+
+        const listeningMatch = /Listening on port\s+(\d+)\s+for\s+gdb\s+connections/i.exec(text)
+
+        if (listeningMatch) {
+          this.openOcdGdbPort = Number.parseInt(listeningMatch[1], 10) || 3333
+          ready = true
+          clearTimeout(timeout)
+          resolve()
+          return
+        }
+
+        const acceptingMatch = /accepting\s+'gdb'\s+connection\s+on\s+tcp\/(\d+)/i.exec(text)
+
+        if (acceptingMatch) {
+          this.openOcdGdbPort = Number.parseInt(acceptingMatch[1], 10) || 3333
           ready = true
           clearTimeout(timeout)
           resolve()
@@ -835,18 +863,36 @@ export class DebugSession {
       child.stderr.on('data', (chunk) => onChunk('stderr', chunk))
       child.once('error', (error) => {
         clearTimeout(timeout)
+
+        if (this.openOcdProcess === child) {
+          this.openOcdProcess = null
+        }
+
         reject(error)
       })
       child.once('exit', (code) => {
         clearTimeout(timeout)
 
         if (!ready) {
+          if (this.openOcdProcess === child) {
+            this.openOcdProcess = null
+          }
+
           reject(new Error(`OpenOCD exited before becoming ready. Exit code: ${code ?? 'unknown'}`))
           return
         }
 
-        this.emitLog('openocd', 'info', `OpenOCD exited with code ${code ?? 'unknown'}\n`)
+        if (this.openOcdProcess !== child) {
+          return
+        }
+
         this.openOcdProcess = null
+        this.emitLog('openocd', 'info', `OpenOCD exited with code ${code ?? 'unknown'}\n`)
+
+        if (this.gdbProcess) {
+          this.emitLog('app', 'stderr', 'OpenOCD 连接意外断开，正在停止调试会话。\n')
+          void this.stop()
+        }
       })
     })
   }
@@ -889,12 +935,27 @@ export class DebugSession {
     })
 
     this.gdbProcess = child
+
+    const readyPromise = this.waitForPrompt()
+    const launchFailure = new Promise<never>((_resolve, reject) => {
+      child.once('error', (error) => {
+        this.emitLog('gdb', 'stderr', `Failed to launch GDB: ${error.message}\n`)
+
+        if (this.gdbProcess === child) {
+          this.gdbProcess = null
+        }
+
+        reject(error)
+      })
+    })
+
     child.stdout.on('data', (chunk) => this.processGdbChunk(chunk))
     child.stderr.on('data', (chunk) => this.emitLog('gdb', 'stderr', chunk.toString()))
-    child.once('error', (error) => {
-      this.emitLog('gdb', 'stderr', `Failed to launch GDB: ${error.message}\n`)
-    })
     child.once('exit', (code) => {
+      if (this.gdbProcess !== child) {
+        return
+      }
+
       this.emitLog('gdb', 'info', `GDB exited with code ${code ?? 'unknown'}\n`)
       this.gdbProcess = null
       this.rejectPendingCommands('GDB terminated.')
@@ -902,7 +963,7 @@ export class DebugSession {
       this.emitState()
     })
 
-    await this.waitForPrompt()
+    await Promise.race([readyPromise, launchFailure])
   }
 
   private async handleMiRecord(record: MiRecord) {
@@ -954,8 +1015,8 @@ export class DebugSession {
       return
     }
 
-    if (record.outputType === 'notify' && record.className === 'breakpoint-modified') {
-      this.emitState()
+    if (record.outputType === 'notify' && (record.className === 'breakpoint-modified' || record.className === 'breakpoint-created' || record.className === 'breakpoint-deleted')) {
+      void this.refreshBreakpoints()
     }
   }
 
@@ -978,14 +1039,33 @@ export class DebugSession {
 
   private mapBreakpoint(value: MiValue | undefined, fallbackFile: string, fallbackLine: number): DebugBreakpoint {
     const payload = asObject(value)
+    const typeText = payload ? asString(payload.type) ?? '' : ''
+    const isWatch = /watch/i.test(typeText)
     const file = payload ? asString(payload.fullname) ?? asString(payload.file) ?? fallbackFile : fallbackFile
+    const watchAccess: DataBreakpointAccess | undefined = isWatch
+      ? /read/i.test(typeText) && /acc/i.test(typeText)
+        ? 'access'
+        : /read/i.test(typeText)
+        ? 'read'
+        : 'write'
+      : undefined
+    const ignoreCount = payload ? asNumber(payload.ignore) : undefined
+    const hitCount = payload ? asNumber(payload.times) : undefined
+    const condition = payload ? asString(payload.cond) : undefined
+    const watchExpression = isWatch && payload ? asString(payload.what) ?? asString(payload['original-location']) : undefined
 
     return {
       id: payload ? asString(payload.number) ?? `${toPosixPath(fallbackFile)}:${fallbackLine}` : `${toPosixPath(fallbackFile)}:${fallbackLine}`,
+      kind: isWatch ? 'watch' : 'line',
       file: path.normalize(file),
       line: payload ? asNumber(payload.line) ?? fallbackLine : fallbackLine,
       enabled: payload ? (asString(payload.enabled) ?? 'y') !== 'n' : true,
       verified: Boolean(payload),
+      condition: condition && condition.length > 0 ? condition : undefined,
+      ignoreCount: ignoreCount && ignoreCount > 0 ? ignoreCount : undefined,
+      hitCount: hitCount ?? undefined,
+      watchExpression,
+      watchAccess,
     }
   }
 
@@ -1008,7 +1088,7 @@ export class DebugSession {
   }
 
   private async refreshStopContext() {
-    await Promise.allSettled([this.refreshStack(false), this.refreshWatches(false)])
+    await Promise.allSettled([this.refreshStack(false), this.refreshWatches(false), this.refreshBreakpoints(false)])
     this.syncWatchSamplingState()
     this.emitState()
   }
@@ -1078,6 +1158,7 @@ export class DebugSession {
     }
 
     await this.syncWatchVariableObjects()
+    // Drop stale child→varobj mappings; describe/listChildren below rebuilds them.
     this.clearWatchVariableObjectMappings()
 
     const watches: WatchValue[] = []
@@ -1132,47 +1213,49 @@ export class DebugSession {
     this.state.status = 'connecting'
     this.emitState()
 
-    await this.startOpenOcd(request)
-    await this.startGdb(request)
+    try {
+      await this.startOpenOcd(request)
+      await this.startGdb(request)
 
-    const elfFile = toPosixPath(resolveProjectPath(request.projectRoot, request.elfFile, ''))
-    await this.sendCommand('-gdb-set mi-async on')
-    await this.sendCommand(`-file-exec-and-symbols ${quoteMiString(elfFile)}`)
-    await this.sendCommand('-target-select extended-remote localhost:3333')
+      const elfFile = toPosixPath(resolveProjectPath(request.projectRoot, request.elfFile, ''))
+      await this.sendCommand('-gdb-set mi-async on')
+      await this.sendCommand(`-file-exec-and-symbols ${quoteMiString(elfFile)}`)
+      await this.sendCommand(`-target-select extended-remote localhost:${this.openOcdGdbPort}`)
 
-    this.state.connected = true
+      this.state.connected = true
 
-    if (request.resetAfterConnect) {
-      await this.sendConsoleCommand('monitor reset halt')
-    }
-
-    if (request.flashOnConnect) {
-      await this.sendCommand('-target-download')
-    }
-
-    if (request.resetAfterConnect) {
-      await this.sendConsoleCommand('monitor reset halt')
-    }
-
-    await this.syncBreakpoints()
-    await this.refreshStack(false)
-    await this.refreshWatches(false)
-
-    this.state.status = 'halted'
-    this.syncWatchSamplingState()
-    this.emitState()
-
-    if (request.runToMain) {
-      try {
-        await this.sendCommand('-break-insert -t main')
-      } catch (error) {
-        this.emitLog('gdb', 'stderr', `Failed to insert temporary main breakpoint: ${(error as Error).message}\n`)
+      if (request.flashOnConnect) {
+        await this.sendConsoleCommand('monitor reset halt')
+        await this.sendCommand('-target-download')
       }
 
-      await this.continueExecution()
-    }
+      if (request.resetAfterConnect) {
+        await this.sendConsoleCommand('monitor reset halt')
+      }
 
-    return this.getState()
+      await this.syncBreakpoints()
+      await this.refreshStack(false)
+      await this.refreshWatches(false)
+
+      this.state.status = 'halted'
+      this.syncWatchSamplingState()
+      this.emitState()
+
+      if (request.runToMain) {
+        try {
+          await this.sendCommand('-break-insert -t main')
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to insert temporary main breakpoint: ${(error as Error).message}\n`)
+        }
+
+        await this.continueExecution()
+      }
+
+      return this.getState()
+    } catch (error) {
+      await this.stop()
+      throw error
+    }
   }
 
   async programDevice(request: StartDebugRequest) {
@@ -1189,7 +1272,7 @@ export class DebugSession {
       await this.startGdb(request)
       await this.sendCommand('-gdb-set mi-async on')
       await this.sendCommand(`-file-exec-and-symbols ${quoteMiString(elfFile)}`)
-      await this.sendCommand('-target-select extended-remote localhost:3333')
+      await this.sendCommand(`-target-select extended-remote localhost:${this.openOcdGdbPort}`)
       await this.sendConsoleCommand('monitor reset halt')
       await this.sendCommand('-target-download')
 
@@ -1339,6 +1422,7 @@ export class DebugSession {
       if (!this.gdbProcess) {
         nextBreakpoints.push({
           id: `${toPosixPath(normalizedFile)}:${line}`,
+          kind: 'line',
           file: normalizedFile,
           line,
           enabled: true,
@@ -1349,7 +1433,7 @@ export class DebugSession {
 
       try {
         const payload = await this.sendCommand(
-          `-break-insert ${quoteMiString(`${toPosixPath(normalizedFile)}:${line}`)}`,
+          `-break-insert --source ${quoteMiString(toPosixPath(normalizedFile))} --line ${line}`,
         )
 
         nextBreakpoints.push(this.mapBreakpoint(payload.bkpt, normalizedFile, line))
@@ -1357,6 +1441,7 @@ export class DebugSession {
         this.emitLog('gdb', 'stderr', `Failed to insert breakpoint ${normalizedFile}:${line}: ${(error as Error).message}\n`)
         nextBreakpoints.push({
           id: `${toPosixPath(normalizedFile)}:${line}`,
+          kind: 'line',
           file: normalizedFile,
           line,
           enabled: true,
@@ -1365,11 +1450,228 @@ export class DebugSession {
       }
     }
 
-    this.state.breakpoints = nextBreakpoints.sort((left, right) => {
+    this.state.breakpoints = this.sortBreakpoints(nextBreakpoints)
+
+    if (this.gdbProcess) {
+      for (const breakpoint of this.state.breakpoints) {
+        if (!breakpoint.verified || breakpoint.kind !== 'line') {
+          continue
+        }
+
+        try {
+          if (breakpoint.condition) {
+            await this.sendCommand(`-break-condition ${breakpoint.id} ${quoteMiString(breakpoint.condition)}`)
+          }
+
+          if (breakpoint.ignoreCount && breakpoint.ignoreCount > 0) {
+            await this.sendCommand(`-break-after ${breakpoint.id} ${breakpoint.ignoreCount}`)
+          }
+
+          if (!breakpoint.enabled) {
+            await this.sendCommand(`-break-disable ${breakpoint.id}`)
+          }
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to restore breakpoint attributes for ${breakpoint.id}: ${(error as Error).message}\n`)
+        }
+      }
+    }
+
+    this.emitState()
+    return this.getState()
+  }
+
+  async updateBreakpoint(request: BreakpointUpdateRequest) {
+    const breakpoint = this.state.breakpoints.find((entry) => entry.id === request.id)
+
+    if (!breakpoint) {
+      return this.getState()
+    }
+
+    if (typeof request.enabled === 'boolean') {
+      breakpoint.enabled = request.enabled
+
+      if (this.gdbProcess && breakpoint.verified) {
+        try {
+          await this.sendCommand(`${request.enabled ? '-break-enable' : '-break-disable'} ${breakpoint.id}`)
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to toggle breakpoint ${breakpoint.id}: ${(error as Error).message}\n`)
+        }
+      }
+    }
+
+    if (request.condition !== undefined) {
+      const condition = request.condition ?? ''
+      breakpoint.condition = condition.trim() ? condition.trim() : undefined
+
+      if (this.gdbProcess && breakpoint.verified) {
+        try {
+          if (breakpoint.condition) {
+            await this.sendCommand(`-break-condition ${breakpoint.id} ${quoteMiString(breakpoint.condition)}`)
+          } else {
+            await this.sendCommand(`-break-condition ${breakpoint.id}`)
+          }
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to set condition for ${breakpoint.id}: ${(error as Error).message}\n`)
+        }
+      }
+    }
+
+    if (request.ignoreCount !== undefined) {
+      const ignoreCount = request.ignoreCount === null ? 0 : Math.max(0, Math.floor(request.ignoreCount))
+      breakpoint.ignoreCount = ignoreCount > 0 ? ignoreCount : undefined
+
+      if (this.gdbProcess && breakpoint.verified) {
+        try {
+          await this.sendCommand(`-break-after ${breakpoint.id} ${ignoreCount}`)
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to set ignore count for ${breakpoint.id}: ${(error as Error).message}\n`)
+        }
+      }
+    }
+
+    if (request.logMessage !== undefined) {
+      const logMessage = request.logMessage ?? ''
+      breakpoint.logMessage = logMessage.trim() ? logMessage.trim() : undefined
+
+      if (this.gdbProcess && breakpoint.verified && breakpoint.kind === 'line') {
+        try {
+          const commands = breakpoint.logMessage
+            ? [`printf ${quoteMiString(`${breakpoint.logMessage}\n`)}`, 'continue']
+            : []
+          const joined = commands.map((entry) => quoteMiString(entry)).join(' ')
+          await this.sendCommand(`-break-commands ${breakpoint.id}${joined ? ` ${joined}` : ''}`)
+        } catch (error) {
+          this.emitLog('gdb', 'stderr', `Failed to set log message for ${breakpoint.id}: ${(error as Error).message}\n`)
+        }
+      }
+    }
+
+    await this.refreshBreakpoints(false)
+    this.emitState()
+    return this.getState()
+  }
+
+  async removeBreakpoint(id: string) {
+    const breakpoint = this.state.breakpoints.find((entry) => entry.id === id)
+
+    if (!breakpoint) {
+      return this.getState()
+    }
+
+    if (this.gdbProcess && breakpoint.verified) {
+      try {
+        await this.sendCommand(`-break-delete ${breakpoint.id}`)
+      } catch (error) {
+        this.emitLog('gdb', 'stderr', `Failed to delete breakpoint ${breakpoint.id}: ${(error as Error).message}\n`)
+      }
+    }
+
+    this.state.breakpoints = this.state.breakpoints.filter((entry) => entry.id !== id)
+    this.emitState()
+    return this.getState()
+  }
+
+  async addDataBreakpoint(request: DataBreakpointRequest) {
+    const expression = request.expression.trim()
+
+    if (!expression) {
+      throw new Error('Data breakpoint expression is required.')
+    }
+
+    if (!this.gdbProcess || !this.state.connected) {
+      throw new Error('Connect the debugger before adding a data breakpoint.')
+    }
+
+    if (this.state.running) {
+      throw new Error('Halt the target before adding a data breakpoint.')
+    }
+
+    const flag = request.access === 'read' ? '-r' : request.access === 'access' ? '-a' : ''
+    const command = `-break-watch ${flag ? `${flag} ` : ''}${quoteMiString(expression)}`
+
+    try {
+      const payload = await this.sendCommand(command.trim())
+      const rawBreakpoint = asObject(payload.wpt) ?? asObject(payload['hw-awpt']) ?? asObject(payload['hw-rwpt']) ?? asObject(payload.bkpt)
+      const mapped = this.mapBreakpoint(rawBreakpoint ?? undefined, '', 0)
+      mapped.kind = 'watch'
+      mapped.watchExpression = expression
+      mapped.watchAccess = request.access
+      this.state.breakpoints = this.sortBreakpoints([
+        ...this.state.breakpoints.filter((entry) => entry.id !== mapped.id),
+        mapped,
+      ])
+    } catch (error) {
+      throw new Error(`Failed to add data breakpoint: ${(error as Error).message}`)
+    }
+
+    await this.refreshBreakpoints(false)
+    this.emitState()
+    return this.getState()
+  }
+
+  private sortBreakpoints(list: DebugBreakpoint[]) {
+    return [...list].sort((left, right) => {
+      if (left.kind !== right.kind) {
+        return left.kind === 'line' ? -1 : 1
+      }
+
       const fileCompare = left.file.localeCompare(right.file)
       return fileCompare !== 0 ? fileCompare : left.line - right.line
     })
-    this.emitState()
+  }
+
+  private async refreshBreakpoints(emitState = true) {
+    if (!this.gdbProcess) {
+      return this.getState()
+    }
+
+    try {
+      const payload = await this.sendCommand('-break-list')
+      const table = asObject(payload.BreakpointTable)
+      const body = asArray(table ? table.body : undefined)
+      const freshById = new Map<string, DebugBreakpoint>()
+
+      for (const entry of body) {
+        const mapped = this.mapBreakpoint(entry, '', 0)
+
+        if (mapped.id) {
+          freshById.set(mapped.id, mapped)
+        }
+      }
+
+      const merged: DebugBreakpoint[] = []
+
+      for (const existing of this.state.breakpoints) {
+        const refreshed = freshById.get(existing.id)
+
+        if (refreshed) {
+          merged.push({
+            ...existing,
+            ...refreshed,
+            logMessage: existing.logMessage,
+          })
+          freshById.delete(existing.id)
+          continue
+        }
+
+        if (!existing.verified) {
+          merged.push(existing)
+        }
+      }
+
+      for (const leftover of freshById.values()) {
+        merged.push(leftover)
+      }
+
+      this.state.breakpoints = this.sortBreakpoints(merged)
+    } catch (error) {
+      this.emitLog('gdb', 'stderr', `Failed to refresh breakpoints: ${(error as Error).message}\n`)
+    }
+
+    if (emitState) {
+      this.emitState()
+    }
+
     return this.getState()
   }
 
@@ -1377,13 +1679,59 @@ export class DebugSession {
     const current = [...this.state.breakpoints]
     this.state.breakpoints = []
 
+    const lineByFile = new Map<string, number[]>()
+    const watchBreakpoints: DebugBreakpoint[] = []
+
     for (const breakpoint of current) {
-      await this.setBreakpoints(breakpoint.file, [
-        ...this.state.breakpoints
-          .filter((entry) => entry.file === breakpoint.file)
-          .map((entry) => entry.line),
-        breakpoint.line,
-      ])
+      if (breakpoint.kind === 'watch') {
+        watchBreakpoints.push(breakpoint)
+        continue
+      }
+
+      const list = lineByFile.get(breakpoint.file) ?? []
+
+      if (!list.includes(breakpoint.line)) {
+        list.push(breakpoint.line)
+      }
+
+      lineByFile.set(breakpoint.file, list)
+    }
+
+    for (const [file, lines] of lineByFile) {
+      await this.setBreakpoints(file, lines)
+
+      for (const restored of this.state.breakpoints) {
+        const previous = current.find((entry) => entry.file === restored.file && entry.line === restored.line && entry.kind === 'line')
+
+        if (!previous) {
+          continue
+        }
+
+        if (previous.condition || previous.ignoreCount || previous.logMessage || !previous.enabled) {
+          await this.updateBreakpoint({
+            id: restored.id,
+            condition: previous.condition ?? null,
+            ignoreCount: previous.ignoreCount ?? null,
+            logMessage: previous.logMessage ?? null,
+            enabled: previous.enabled,
+          })
+        }
+      }
+    }
+
+    for (const breakpoint of watchBreakpoints) {
+      if (!breakpoint.watchExpression) {
+        continue
+      }
+
+      try {
+        await this.addDataBreakpoint({
+          expression: breakpoint.watchExpression,
+          access: breakpoint.watchAccess ?? 'write',
+        })
+      } catch (error) {
+        this.emitLog('gdb', 'stderr', `Failed to restore data breakpoint ${breakpoint.watchExpression}: ${(error as Error).message}\n`)
+      }
     }
 
     return this.getState()

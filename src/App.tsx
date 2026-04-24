@@ -8,6 +8,8 @@ import {
   defaultProjectProfile,
   emptyDebugSessionState,
   type CommandResult,
+  type DataBreakpointAccess,
+  type DebugBreakpoint,
   type DebugConfigPreset,
   type DebugControlCommand,
   type DebugTargetPreset,
@@ -27,7 +29,7 @@ import {
 
 type ActiveTab = 'editor' | 'memory' | 'registers' | 'logs'
 type LeftPanelView = 'project' | 'files'
-type RightPanelView = 'watch' | 'session'
+type RightPanelView = 'watch' | 'breakpoints' | 'session'
 type WatchPanelView = 'table' | 'scope'
 type IconName =
   | 'folder'
@@ -741,6 +743,12 @@ function App() {
   const [scopeManualOffset, setScopeManualOffset] = useState(0)
   const [statusText, setStatusText] = useState('就绪')
   const [isBusy, setIsBusy] = useState(false)
+  const [editingBreakpointId, setEditingBreakpointId] = useState<string | null>(null)
+  const [breakpointDraftCondition, setBreakpointDraftCondition] = useState('')
+  const [breakpointDraftIgnore, setBreakpointDraftIgnore] = useState('')
+  const [breakpointDraftLog, setBreakpointDraftLog] = useState('')
+  const [dataBreakpointDraft, setDataBreakpointDraft] = useState('')
+  const [dataBreakpointAccess, setDataBreakpointAccess] = useState<DataBreakpointAccess>('write')
   const [editorReady, setEditorReady] = useState(false)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(308)
   const [rightSidebarWidth, setRightSidebarWidth] = useState(332)
@@ -752,6 +760,7 @@ function App() {
   const resizeStateRef = useRef<{ side: ResizableSidebar; startX: number; startWidth: number } | null>(null)
   const contextMenuPositionRef = useRef<Monaco.Position | null>(null)
   const pendingEditorRevealRef = useRef<{ path: string; lineNumber: number; column: number } | null>(null)
+  const lastStopSignatureRef = useRef<string | null>(null)
   const sourceFileCacheRef = useRef(new Map<string, OpenFileResult>())
   const scanRef = useRef(scan)
   const activeFileRef = useRef<OpenFileResult | null>(activeFile)
@@ -821,6 +830,43 @@ function App() {
   useEffect(() => {
     activeFileRef.current = activeFile
   }, [activeFile])
+
+  useEffect(() => {
+    if (debugState.running || !debugState.currentFrame) {
+      lastStopSignatureRef.current = null
+      return
+    }
+
+    const frame = debugState.currentFrame
+
+    if (!frame.fullPath || !frame.line) {
+      return
+    }
+
+    const signature = `${frame.fullPath}:${frame.line}:${frame.address ?? ''}:${debugState.lastStopReason ?? ''}`
+
+    if (lastStopSignatureRef.current === signature) {
+      return
+    }
+
+    lastStopSignatureRef.current = signature
+
+    const needsFileSwitch = activeFileRef.current?.path !== frame.fullPath
+
+    if (!needsFileSwitch) {
+      pendingEditorRevealRef.current = {
+        path: frame.fullPath,
+        lineNumber: frame.line,
+        column: 1,
+      }
+      return
+    }
+
+    void openFile(resolveProjectFileEntry(frame.fullPath), {
+      lineNumber: frame.line,
+      column: 1,
+    })
+  }, [debugState.currentFrame, debugState.running, debugState.lastStopReason])
 
   useEffect(() => {
     if (!selectedWatch) {
@@ -1382,6 +1428,65 @@ function App() {
     setDebugState(state)
   }
 
+  async function removeBreakpointById(id: string) {
+    try {
+      const state = await window.stm32Debug.removeBreakpoint(id)
+      setDebugState(state)
+    } catch (error) {
+      setStatusText(`删除断点失败: ${(error as Error).message}`)
+    }
+  }
+
+  async function toggleBreakpointEnabled(id: string, enabled: boolean) {
+    try {
+      const state = await window.stm32Debug.updateBreakpoint({ id, enabled })
+      setDebugState(state)
+    } catch (error) {
+      setStatusText(`切换断点失败: ${(error as Error).message}`)
+    }
+  }
+
+  async function saveBreakpointAttributes(
+    id: string,
+    attrs: { condition?: string | null; ignoreCount?: number | null; logMessage?: string | null },
+  ) {
+    try {
+      const state = await window.stm32Debug.updateBreakpoint({ id, ...attrs })
+      setDebugState(state)
+      setStatusText('断点参数已更新')
+    } catch (error) {
+      setStatusText(`更新断点失败: ${(error as Error).message}`)
+    }
+  }
+
+  async function addDataBreakpointFromInput(expression: string, access: 'write' | 'read' | 'access') {
+    const trimmed = expression.trim()
+
+    if (!trimmed) {
+      setStatusText('请输入数据断点要监视的表达式或地址。')
+      return
+    }
+
+    try {
+      const state = await window.stm32Debug.addDataBreakpoint({ expression: trimmed, access })
+      setDebugState(state)
+      setStatusText(`已添加数据断点 ${trimmed} (${access})`)
+    } catch (error) {
+      setStatusText(`添加数据断点失败: ${(error as Error).message}`)
+    }
+  }
+
+  async function openBreakpointSource(breakpoint: DebugBreakpoint) {
+    if (breakpoint.kind !== 'line' || !breakpoint.file) {
+      return
+    }
+
+    await openFile(resolveProjectFileEntry(breakpoint.file), {
+      lineNumber: breakpoint.line,
+      column: 1,
+    })
+  }
+
   async function addEditorSelectionToWatch(editor: Monaco.editor.IStandaloneCodeEditor) {
     const expression = getEditorExpression(editor)
 
@@ -1856,6 +1961,204 @@ function App() {
           </div>
         </div>
       </div>
+    )
+  }
+
+  function startEditingBreakpoint(breakpoint: DebugBreakpoint) {
+    setEditingBreakpointId(breakpoint.id)
+    setBreakpointDraftCondition(breakpoint.condition ?? '')
+    setBreakpointDraftIgnore(breakpoint.ignoreCount ? String(breakpoint.ignoreCount) : '')
+    setBreakpointDraftLog(breakpoint.logMessage ?? '')
+  }
+
+  function cancelEditingBreakpoint() {
+    setEditingBreakpointId(null)
+    setBreakpointDraftCondition('')
+    setBreakpointDraftIgnore('')
+    setBreakpointDraftLog('')
+  }
+
+  async function submitBreakpointEdit(id: string) {
+    const trimmedIgnore = breakpointDraftIgnore.trim()
+    const parsedIgnore = trimmedIgnore ? Number.parseInt(trimmedIgnore, 10) : 0
+
+    if (trimmedIgnore && (!Number.isFinite(parsedIgnore) || parsedIgnore < 0)) {
+      setStatusText('命中次数必须是非负整数。')
+      return
+    }
+
+    await saveBreakpointAttributes(id, {
+      condition: breakpointDraftCondition.trim() ? breakpointDraftCondition.trim() : null,
+      ignoreCount: parsedIgnore > 0 ? parsedIgnore : null,
+      logMessage: breakpointDraftLog.trim() ? breakpointDraftLog.trim() : null,
+    })
+    cancelEditingBreakpoint()
+  }
+
+  function renderBreakpointRow(breakpoint: DebugBreakpoint) {
+    const isEditing = editingBreakpointId === breakpoint.id
+    const location = breakpoint.kind === 'watch'
+      ? `${breakpoint.watchExpression ?? '?'} (${breakpoint.watchAccess ?? 'write'})`
+      : `${breakpoint.file.split(/[\\/]/).pop() ?? breakpoint.file}:${breakpoint.line}`
+
+    return (
+      <div key={breakpoint.id} className={breakpoint.enabled ? 'breakpoint-row' : 'breakpoint-row disabled'}>
+        <div className="breakpoint-header">
+          <label className="breakpoint-toggle">
+            <input
+              type="checkbox"
+              checked={breakpoint.enabled}
+              onChange={(event) => void toggleBreakpointEnabled(breakpoint.id, event.target.checked)}
+            />
+          </label>
+          <button
+            type="button"
+            className="breakpoint-location"
+            onClick={() => void openBreakpointSource(breakpoint)}
+            disabled={breakpoint.kind !== 'line'}
+            title={breakpoint.kind === 'line' ? '跳转到该断点所在代码行' : '数据断点：监视表达式/地址'}
+          >
+            <span className={breakpoint.kind === 'watch' ? 'breakpoint-kind watch' : 'breakpoint-kind line'}>
+              {breakpoint.kind === 'watch' ? '数据' : '代码'}
+            </span>
+            <strong>{location}</strong>
+          </button>
+          <span className="breakpoint-hits">命中 {breakpoint.hitCount ?? 0}</span>
+          <div className="breakpoint-actions">
+            <button type="button" onClick={() => startEditingBreakpoint(breakpoint)}>
+              <ButtonLabel icon="write" text="编辑" />
+            </button>
+            <button type="button" onClick={() => void removeBreakpointById(breakpoint.id)}>
+              <ButtonLabel icon="remove" text="移除" />
+            </button>
+          </div>
+        </div>
+        {(breakpoint.condition || breakpoint.ignoreCount || breakpoint.logMessage) && !isEditing ? (
+          <div className="breakpoint-meta">
+            {breakpoint.condition ? <span>条件：<code>{breakpoint.condition}</code></span> : null}
+            {breakpoint.ignoreCount ? <span>忽略前 {breakpoint.ignoreCount} 次</span> : null}
+            {breakpoint.logMessage ? <span>日志：<code>{breakpoint.logMessage}</code></span> : null}
+          </div>
+        ) : null}
+        {isEditing ? (
+          <div className="breakpoint-editor">
+            <label>
+              <span>条件 (C 表达式)</span>
+              <input
+                value={breakpointDraftCondition}
+                onChange={(event) => setBreakpointDraftCondition(event.target.value)}
+                placeholder="例如: counter > 100"
+              />
+            </label>
+            <label>
+              <span>忽略次数 (命中前跳过)</span>
+              <input
+                type="number"
+                min={0}
+                value={breakpointDraftIgnore}
+                onChange={(event) => setBreakpointDraftIgnore(event.target.value)}
+                placeholder="0"
+              />
+            </label>
+            {breakpoint.kind === 'line' ? (
+              <label>
+                <span>日志消息 (命中后打印并继续)</span>
+                <input
+                  value={breakpointDraftLog}
+                  onChange={(event) => setBreakpointDraftLog(event.target.value)}
+                  placeholder="例如: hit foo=%d"
+                />
+              </label>
+            ) : null}
+            <div className="breakpoint-editor-actions">
+              <button type="button" onClick={() => void submitBreakpointEdit(breakpoint.id)}>
+                <ButtonLabel icon="write" text="保存" />
+              </button>
+              <button type="button" onClick={cancelEditingBreakpoint}>
+                取消
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  function renderBreakpointsPanel() {
+    const lineBreakpoints = debugState.breakpoints.filter((entry) => entry.kind === 'line')
+    const watchBreakpoints = debugState.breakpoints.filter((entry) => entry.kind === 'watch')
+
+    return (
+      <section className="panel-section breakpoints-panel">
+        <div className="panel-header">
+          <div>
+            <h3>断点管理</h3>
+            <span>条件、命中计数、日志断点与数据监视断点</span>
+          </div>
+          <span className="watch-badge">{debugState.breakpoints.length} 个</span>
+        </div>
+
+        <div className="watch-card data-breakpoint-card">
+          <div className="subsection-header">
+            <strong>添加数据断点</strong>
+            <span>对变量 / 地址的读写触发中断（使用硬件 watchpoint，通常上限 4 个）</span>
+          </div>
+          <div className="data-breakpoint-composer">
+            <input
+              value={dataBreakpointDraft}
+              onChange={(event) => setDataBreakpointDraft(event.target.value)}
+              placeholder="变量名、*(uint32_t*)0x20000000、&counter 等"
+            />
+            <select value={dataBreakpointAccess} onChange={(event) => setDataBreakpointAccess(event.target.value as DataBreakpointAccess)}>
+              <option value="write">写入时中断</option>
+              <option value="read">读取时中断</option>
+              <option value="access">读写时中断</option>
+            </select>
+            <button
+              type="button"
+              disabled={!debugState.connected || debugState.running}
+              onClick={() => {
+                void addDataBreakpointFromInput(dataBreakpointDraft, dataBreakpointAccess).then(() => setDataBreakpointDraft(''))
+              }}
+            >
+              <ButtonLabel icon="plus" text="添加" />
+            </button>
+          </div>
+          {!debugState.connected ? (
+            <small className="breakpoint-hint">调试器未连接，数据断点在连接后才会生效。</small>
+          ) : debugState.running ? (
+            <small className="breakpoint-hint">目标正在运行，先暂停（pause）后再添加数据断点。</small>
+          ) : null}
+        </div>
+
+        <div className="watch-card breakpoint-list-card">
+          <div className="subsection-header">
+            <strong>代码断点</strong>
+            <span>编辑行旁边槽位点击可快速开关；此处可加条件、忽略次数、日志</span>
+          </div>
+          {lineBreakpoints.length > 0 ? (
+            <div className="breakpoint-list">
+              {lineBreakpoints.map((entry) => renderBreakpointRow(entry))}
+            </div>
+          ) : (
+            <div className="empty-list-state">尚未设置代码断点。点击编辑器行号左侧即可添加。</div>
+          )}
+        </div>
+
+        <div className="watch-card breakpoint-list-card">
+          <div className="subsection-header">
+            <strong>数据断点</strong>
+            <span>命中时会暂停目标并跳转到触发写入/读取的代码行</span>
+          </div>
+          {watchBreakpoints.length > 0 ? (
+            <div className="breakpoint-list">
+              {watchBreakpoints.map((entry) => renderBreakpointRow(entry))}
+            </div>
+          ) : (
+            <div className="empty-list-state">尚未添加数据断点。</div>
+          )}
+        </div>
+      </section>
     )
   }
 
@@ -2405,6 +2708,9 @@ function App() {
             <button className={rightPanelView === 'watch' ? 'active' : ''} onClick={() => setRightPanelView('watch')}>
               <ButtonLabel icon="wave" text="监视示波" />
             </button>
+            <button className={rightPanelView === 'breakpoints' ? 'active' : ''} onClick={() => setRightPanelView('breakpoints')}>
+              <ButtonLabel icon="list" text={`断点 (${debugState.breakpoints.length})`} />
+            </button>
             <button className={rightPanelView === 'session' ? 'active' : ''} onClick={() => setRightPanelView('session')}>
               <ButtonLabel icon="stack" text="会话信息" />
             </button>
@@ -2441,6 +2747,8 @@ function App() {
 
               {watchPanelView === 'scope' ? renderScopeView() : null}
             </section>
+          ) : rightPanelView === 'breakpoints' ? (
+            renderBreakpointsPanel()
           ) : (
             <section className="panel-section session-panel">
               <div className="panel-header">

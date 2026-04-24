@@ -101,12 +101,36 @@ export interface StackFrame {
   line?: number
 }
 
+export type DebugBreakpointKind = 'line' | 'watch'
+
+export type DataBreakpointAccess = 'write' | 'read' | 'access'
+
 export interface DebugBreakpoint {
   id: string
+  kind: DebugBreakpointKind
   file: string
   line: number
   enabled: boolean
   verified: boolean
+  condition?: string
+  ignoreCount?: number
+  hitCount?: number
+  logMessage?: string
+  watchExpression?: string
+  watchAccess?: DataBreakpointAccess
+}
+
+export interface BreakpointUpdateRequest {
+  id: string
+  enabled?: boolean
+  condition?: string | null
+  ignoreCount?: number | null
+  logMessage?: string | null
+}
+
+export interface DataBreakpointRequest {
+  expression: string
+  access: DataBreakpointAccess
 }
 
 export interface WatchValue {
@@ -242,6 +266,9 @@ export interface Stm32DebugApi {
   stopDebugSession(): Promise<DebugSessionState>
   sendDebugControl(command: DebugControlCommand): Promise<DebugSessionState>
   setBreakpoints(filePath: string, lines: number[]): Promise<DebugSessionState>
+  updateBreakpoint(request: BreakpointUpdateRequest): Promise<DebugSessionState>
+  removeBreakpoint(id: string): Promise<DebugSessionState>
+  addDataBreakpoint(request: DataBreakpointRequest): Promise<DebugSessionState>
   setWatchExpressions(expressions: string[]): Promise<DebugSessionState>
   setWatchExpansion(request: WatchExpansionRequest): Promise<DebugSessionState>
   configureWatchSampling(request: WatchSamplingRequest): Promise<DebugSessionState>
